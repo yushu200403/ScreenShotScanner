@@ -1,0 +1,53 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: screen_scanner
+      POSTGRES_USER: screen_scanner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U screen_scanner -d screen_scanner"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  web:
+    build:
+      context: ./server
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://screen_scanner:${POSTGRES_PASSWORD}@db:5432/screen_scanner
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_DIR: /data/screenshots
+      SESSION_COOKIE_SECURE: "true"
+      TRUST_PROXY: "true"
+    volumes:
+      - screenshot_data:/data/screenshots
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  screenshot_data:
