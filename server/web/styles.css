@@ -470,7 +470,18 @@ tbody tr:hover td { background: #fbfdfc; }
 .console-device, .console-preset { min-width: 0; }
 .desktop-device-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .desktop-device-name strong { font-size: 15px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.console-preset select { height: 40px; padding-top: 8px; padding-bottom: 8px; }
+.preset-picker-button { display: flex; align-items: center; justify-content: space-between; width: 100%; min-width: 0; height: 40px; padding: 8px 10px; }
+.preset-picker-button > span:first-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.preset-picker-button > span:last-child { flex: none; }
+.preset-choices { display: grid; gap: 8px; }
+.preset-choice { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--ink); text-align: left; }
+.preset-choice:hover:not(.selected):not(:disabled) { background: var(--soft); }
+.preset-choice.selected { background: #e6f2ed; border-color: var(--line); box-shadow: none; }
+.preset-choice-info { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.preset-choice-info strong { font-size: 14px; }
+.preset-choice-info .muted { font-size: 12px; }
+.preset-choice-check { flex: none; font-size: 12px; color: var(--muted); }
+.preset-choice.selected .preset-choice-check { color: var(--accent); }
 .shared-preset { display: block; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #capture-action { min-width: 112px; white-space: nowrap; }
 .console-bar .menu-button { width: 40px; height: 40px; }
@@ -495,7 +506,7 @@ input[type="checkbox"] { min-height: 0; padding: 0; }
   .mobile-device-picker > span:nth-child(2) { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: left; }
   .mobile-device-picker .status-dot { flex: none; }
   .console-preset { grid-column: 1; grid-row: 2; }
-  .console-preset select { height: 44px; padding: 8px 30px 8px 10px; }
+  .preset-picker-button { height: 44px; }
   #capture-action { grid-column: 2 / 4; grid-row: 2; height: 44px; }
   .console-bar .menu-button { grid-column: 3; grid-row: 1; width: 40px; height: 44px; }
   .computer-choices .device-meta { white-space: normal; }

@@ -172,7 +172,7 @@ function renderDeviceDetail() {
   const latest=state.requests.find(r=>r.device_id===device.id);
   root.innerHTML=`<div class="console-controls"><form id="request-form" data-device-id="${device.id}" class="console-bar">
     <div class="console-device"><div class="desktop-device-name" title="${esc(device.name)}">${statusLabel(device.online?"online":"offline")}<strong>${esc(device.name)}</strong></div><button type="button" class="secondary-button mobile-device-picker" id="select-computer" aria-haspopup="dialog" aria-label="选择电脑"><span class="status-dot ${device.online?"online":""}" aria-hidden="true"></span><span>${esc(device.name)}</span><span aria-hidden="true">⌄</span></button></div>
-    <div class="console-preset">${own?`<label class="sr-only" for="device-preset">本次使用的预设</label><select id="device-preset" data-device-id="${device.id}" disabled><option>正在加载预设...</option></select>`:`<span class="shared-preset" title="由电脑主人设置">预设：${esc(device.preset?.name||"尚未选择")}</span>`}</div>
+    <div class="console-preset">${own?`<button type="button" class="secondary-button preset-picker-button" id="device-preset" data-device-id="${device.id}" aria-haspopup="dialog" aria-label="选择预设：${esc(device.preset?.name||"尚未选择")}" title="${esc(device.preset?.name||"选择预设")}" ${state.pendingSettings.has(device.id)?"disabled":""}><span>${esc(device.preset?.name||"选择预设")}</span><span aria-hidden="true">⌄</span></button>`:`<span class="shared-preset" title="由电脑主人设置">预设：${esc(device.preset?.name||"尚未选择")}</span>`}</div>
     <button class="primary-button" id="capture-action" type="submit" disabled>截图并提问</button><button type="button" class="quiet-button menu-button" id="console-menu" aria-label="问答设置" aria-haspopup="dialog"><span class="hamburger" aria-hidden="true"></span></button></form>
     ${!device.preset_available?`<p class="request-status failed">${own?"请选择可用预设。":"请联系电脑主人选择可用预设。"}</p>`:""}
     ${!device.online?'<p class="request-status">这台电脑尚未连接，请打开客户端并登录。</p>':""}</div>
@@ -184,24 +184,46 @@ function renderDeviceDetail() {
   });
   $("#console-menu").addEventListener("click",()=>controlsModal(device));
   $("#select-computer").addEventListener("click",computerPicker);
-  if(own)loadComputerPresets(device);
+  if(own)$("#device-preset").addEventListener("click",()=>presetPicker(device));
   restoreAnswerView();syncRequestControls();syncQuestionIndicator();
 }
-async function loadComputerPresets(device) {
-  const select=$("#device-preset");
+async function presetPicker(device) {
+  if(state.pendingSettings.has(device.id))return;
+  modal(`<h3>选择预设</h3><div id="preset-choices" class="preset-choices" aria-busy="true"><p class="muted" role="status">正在加载预设...</p></div><p id="preset-picker-message" class="form-message" role="status"></p><div class="modal-actions"><button type="button" class="secondary-button" id="picker-manage-presets">管理预设</button></div>`);
+  const choices=$("#preset-choices"),message=$("#preset-picker-message");
+  $("#picker-manage-presets").addEventListener("click",()=>{closeModal();navigate("presets");});
   try {
     const result=await api(`/api/devices/${device.id}/settings`);
-    if(!select.isConnected)return;
-    select.innerHTML='<option value="">请选择预设</option>'+result.presets.map(p=>`<option value="${p.id}" ${p.id===device.preset?.id?"selected":""}>${esc(p.name)} · ${p.is_global?"公共":"个人"}${result.presets.filter(x=>x.name===p.name).length>1?" · #"+p.id:""}</option>`).join("");
-    select.disabled=state.pendingSettings.has(device.id);
-    select.addEventListener("change",async()=>{
-      if(!select.value){select.value=String(state.devices.find(d=>d.id===device.id)?.preset?.id||"");return;}
-      select.disabled=true;saveDeviceDraft();state.pendingSettings.add(device.id);syncRequestControls();
-      try {await api(`/api/devices/${device.id}/settings`,{method:"PUT",body:JSON.stringify({preset_id:Number(select.value)})});notify("预设已更新");await refreshDevices();}
-      catch(e){select.value=String(state.devices.find(d=>d.id===device.id)?.preset?.id||"");notify(e.message,true);}
-      finally{state.pendingSettings.delete(device.id);select.disabled=false;const current=$("#device-preset");if(current?.dataset.deviceId===String(device.id))current.disabled=false;syncRequestControls();}
-    });
-  }catch(e){if(select.isConnected)select.innerHTML='<option>加载失败，请刷新电脑列表</option>';notify(e.message,true);}
+    if(!choices.isConnected)return;
+    const selectedId=state.devices.find(d=>d.id===device.id)?.preset?.id;
+    choices.innerHTML=result.presets.length?result.presets.map(p=>`<button type="button" class="preset-choice ${p.id===selectedId?"selected":""}" data-preset-id="${p.id}" aria-pressed="${p.id===selectedId}"><span class="preset-choice-info"><strong>${esc(p.name)}</strong><span class="muted">${p.is_global?"公共预设":"个人预设"}${result.presets.filter(x=>x.name===p.name).length>1?" · 编号 "+p.id:""}</span></span><span class="preset-choice-check">${p.id===selectedId?"已选中":"选择"}</span></button>`).join(""):'<p class="muted">暂无可用预设，请先在管理预设中创建。</p>';
+    choices.querySelectorAll("[data-preset-id]").forEach(button=>button.addEventListener("click",async()=>{
+      if(state.pendingSettings.has(device.id))return;
+      const presetId=Number(button.dataset.presetId);
+      if(presetId===state.devices.find(d=>d.id===device.id)?.preset?.id){closeModal();return;}
+      state.pendingSettings.add(device.id);syncRequestControls();
+      choices.querySelectorAll("button").forEach(b=>b.disabled=true);
+      const trigger=$("#device-preset");if(trigger?.dataset.deviceId===String(device.id))trigger.disabled=true;
+      message.className="form-message";message.textContent="正在保存...";
+      let saved=false;
+      try {
+        await api(`/api/devices/${device.id}/settings`,{method:"PUT",body:JSON.stringify({preset_id:presetId})});
+        saved=true;notify("预设已更新");await refreshDevices();
+      }catch(e){if(saved||!message.isConnected)notify(e.message,true);else{message.className="form-message error";message.textContent=e.message;}}
+      finally {
+        state.pendingSettings.delete(device.id);
+        choices.querySelectorAll("button").forEach(b=>b.disabled=false);
+        const current=$("#device-preset");if(current?.dataset.deviceId===String(device.id))current.disabled=false;
+        syncRequestControls();
+        if(saved&&choices.isConnected)closeModal();
+      }
+    }));
+  }catch(e){
+    if(!choices.isConnected)return;
+    choices.innerHTML='<button type="button" class="secondary-button" id="retry-presets">重新加载</button>';
+    message.className="form-message error";message.textContent=e.message;
+    choices.querySelector("button").addEventListener("click",()=>presetPicker(device));
+  }finally{choices.setAttribute("aria-busy","false");}
 }
 function controlsModal(device) {
   const own=device&&(device.owner_id===state.user.id||state.user.role==="admin");
