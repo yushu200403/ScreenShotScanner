@@ -1,4 +1,5 @@
-const state = { user: null, csrf: "", page: "dashboard", devices: [], presets: [], deviceLimit: 5, requests: [], selectedDeviceId: null, socket: null, reconnectTimer: null, deviceDrafts: {}, requestLoadVersion: 0, pendingSettings: new Set() };
+const state = { user: null, csrf: "", page: "dashboard", devices: [], presets: [], deviceLimit: 5, requests: [], selectedDeviceId: null, socket: null, reconnectTimer: null, deviceDrafts: {}, requestLoadVersion: 0, pendingSettings: new Set(), pendingRequests: new Set(), answerViews: new Map() };
+const activeStatuses = ["waiting_capture", "capturing", "uploading", "processing"];
 const $ = (selector) => document.querySelector(selector);
 const contentRoot = () => $("#page-content");
 function esc(value) { return String(value == null ? "" : value).replace(/[&<>"']/g, function (c) { return {"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#039;"}[c]; }); }
@@ -11,7 +12,7 @@ async function api(path, options) { options=options||{}; var method=(options.met
 let modalReturnFocus=null;
 let modalBodyOverflow="";
 function modal(inner) { if(!$(".modal")){modalReturnFocus=document.activeElement;modalBodyOverflow=document.body.style.overflow;}document.body.style.overflow="hidden";$("#modal-root").innerHTML='<div class="modal-backdrop" data-close-modal><div class="modal" role="dialog" aria-modal="true" tabindex="-1" onclick="event.stopPropagation()"><button class="quiet-button modal-close" type="button" aria-label="关闭弹窗" onclick="closeModal()">关闭</button>'+inner+'</div></div>';const dialog=$(".modal");dialog.setAttribute("aria-label",dialog.querySelector("h3")?.textContent||"设置");(dialog.querySelector("input,textarea,select")||dialog.querySelector("button")||dialog).focus(); }
-function closeModal() { $("#modal-root").innerHTML="";document.body.style.overflow=modalBodyOverflow;if(modalReturnFocus?.isConnected)modalReturnFocus.focus();modalReturnFocus=null; }
+function closeModal() { $("#modal-root").innerHTML="";document.body.style.overflow=modalBodyOverflow;const trigger=modalReturnFocus?.isConnected?modalReturnFocus:document.getElementById(modalReturnFocus?.id);trigger?.focus();modalReturnFocus=null; }
 function showApp() { $("#auth-view").classList.add("hidden");$("#app-view").classList.remove("hidden");$("#account-name").textContent=state.user.display_name;$("#account-role").textContent=state.user.role === "admin" ? "管理员" : "普通用户";document.querySelectorAll(".admin-only").forEach(function(n){n.classList.toggle("hidden",state.user.role !== "admin");});connectBrowser();navigate("dashboard"); }
 async function boot() {
   document.addEventListener("keydown",e=>{const dialog=$(".modal");if(!dialog)return;if(e.key==="Escape"){closeModal();return;}if(e.key!=="Tab")return;const fields=Array.from(dialog.querySelectorAll('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href],summary')).filter(x=>x.getClientRects().length);if(!fields.length){e.preventDefault();dialog.focus();return;}const first=fields[0],last=fields[fields.length-1];if(e.shiftKey&&(document.activeElement===first||document.activeElement===dialog)){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});
@@ -27,7 +28,7 @@ async function boot() {
   var session=await fetch("/api/auth/me",{credentials:"same-origin"}).then(function(r){return r.json();});
   if(session.authenticated){state.user=session.user;state.csrf=session.csrf_token;showApp();}
 }
-function clearSession(){state.user=null;state.csrf="";clearTimeout(state.reconnectTimer);if(state.socket){state.socket.onclose=null;state.socket.close();state.socket=null;}closeModal();contentRoot().innerHTML="";state.devices=[];state.requests=[];state.presets=[];state.deviceDrafts={};state.selectedDeviceId=null;$("#auth-view").classList.remove("hidden");$("#app-view").classList.add("hidden");}
+function clearSession(){state.user=null;state.csrf="";clearTimeout(state.reconnectTimer);if(state.socket){state.socket.onclose=null;state.socket.close();state.socket=null;}closeModal();contentRoot().innerHTML="";state.devices=[];state.requests=[];state.presets=[];state.deviceDrafts={};state.selectedDeviceId=null;state.answerViews.clear();state.pendingRequests.clear();state.pendingSettings.clear();$("#auth-view").classList.remove("hidden");$("#app-view").classList.add("hidden");}
 function connectBrowser(){
   clearTimeout(state.reconnectTimer);
   if(!state.user)return;
@@ -44,7 +45,6 @@ function restoreDeviceDraft(){
   var form=$("#request-form"),draft=state.deviceDrafts[state.selectedDeviceId];
   if(!form||!draft)return;
   ["question"].forEach(function(name){var input=form.elements.namedItem(name);if(input&&draft[name]!==undefined){input.value=draft[name];if(name==="model_profile_id")input.dispatchEvent(new Event("change"));}});
-  form.elements.namedItem("force").checked=draft.force==="on";
 }
 async function refreshDevices(){
   await loadDevices();
@@ -53,14 +53,13 @@ async function refreshDevices(){
   if(state.page!=="dashboard"||!$("#device-list"))return;
   renderDeviceList();renderDeviceDetail();
 }
-function realtime(message){if(message.type==="sharing_request"){notify("收到电脑共享申请，请打开共享管理处理");if($("#sharing-pending"))loadSharing(Number($("#sharing-pending").dataset.deviceId));}if(message.type === "request_update"&&message.request){var row=message.request;var i=state.requests.findIndex(function(x){return x.id===row.id;});if(i>=0)state.requests[i]=Object.assign({},state.requests[i],row);else state.requests.unshift(row);if(state.page === "dashboard"&&$("#latest-request")&&row.device_id===state.selectedDeviceId){$("#latest-request").innerHTML=requestResult(row);if(["completed","failed","cancelled"].includes(row.status)&&$("#cancel-active"))$("#cancel-active").remove();}if(state.page === "history"&&["completed","failed","cancelled"].includes(row.status))renderHistory();}if(message.type === "device_update"){refreshDevices().catch(function(e){notify(e.message,true);});}if(message.type === "pairing_update"){notify(message.status === "approved" ? "电脑主人已允许使用" : message.status === "expired" ? "连接许可已失效" : "电脑主人拒绝了申请",message.status !== "approved");refreshDevices().catch(function(e){notify(e.message,true);});}}
+function realtime(message){if(message.type==="sharing_request"){notify("收到电脑共享申请，请打开共享管理处理");if($("#sharing-pending"))loadSharing(Number($("#sharing-pending").dataset.deviceId));}if(message.type === "request_update"&&message.request){var row=message.request;var i=state.requests.findIndex(function(x){return x.id===row.id;});if(i>=0)state.requests[i]=Object.assign({},state.requests[i],row);else state.requests.unshift(row);if(state.page === "dashboard"&&$("#latest-request")&&row.device_id===state.selectedDeviceId){updateLatestAnswer(row);syncRequestControls();}if(state.page === "history"&&["completed","failed","cancelled"].includes(row.status))renderHistory();}if(message.type === "device_update"){refreshDevices().catch(function(e){notify(e.message,true);});}if(message.type === "pairing_update"){notify(message.status === "approved" ? "电脑主人已允许使用" : message.status === "expired" ? "连接许可已失效" : "电脑主人拒绝了申请",message.status !== "approved");refreshDevices().catch(function(e){notify(e.message,true);});}}
 async function navigate(page) {
   saveDeviceDraft();
+  rememberAnswerView();
   state.page=page;
   document.querySelectorAll("[data-page]").forEach(b=>{b.classList.toggle("active",b.dataset.page===page);if(b.dataset.page===page)b.setAttribute("aria-current","page");else b.removeAttribute("aria-current");});
-  const title={dashboard:"截图问答",history:"问答历史",presets:"预设",users:"账号管理",audit:"审计日志"}[page]||"截图问答";
-  $("#page-eyebrow").textContent="屏幕问答";
-  $("#page-title").textContent=title;
+  contentRoot().classList.toggle("dashboard-page",page==="dashboard");
   try { await renderCurrent(); } catch(err) { notify(err.message,true); }
 }
 async function renderCurrent() {
@@ -72,20 +71,55 @@ async function loadDevices() {
   if(!state.devices.some(d=>d.id===state.selectedDeviceId))state.selectedDeviceId=state.devices[0]?.id||null;
 }
 async function loadRequests(device){var version=++state.requestLoadVersion;var suffix=device ? "?device_id="+encodeURIComponent(device) : "";var result=await api("/api/requests"+suffix);if(version===state.requestLoadVersion)state.requests=result.items;}
+function rememberAnswerView() {
+  const root=$("#latest-request"),answer=root?.querySelector("[data-answer-id]");
+  if(!answer)return;
+  state.answerViews.set(answer.dataset.answerId,{scrollTop:root.scrollTop,open:!!answer.querySelector("details[open]"),follow:root.scrollHeight-root.clientHeight-root.scrollTop<40});
+  if(state.answerViews.size>100)state.answerViews.delete(state.answerViews.keys().next().value);
+}
+function restoreAnswerView(follow=false) {
+  const root=$("#latest-request"),answer=root?.querySelector("[data-answer-id]");
+  const view=state.answerViews.get(answer?.dataset.answerId);
+  if(!view)return;
+  const reasoning=answer.querySelector("details");if(reasoning)reasoning.open=view.open;
+  root.scrollTop=follow&&view.follow?root.scrollHeight:view.scrollTop;
+}
+function updateLatestAnswer(row) {
+  const root=$("#latest-request");
+  if(!root||state.requests.find(r=>r.device_id===state.selectedDeviceId)?.id!==row.id)return;
+  const focusOnSummary=document.activeElement===root.querySelector("summary");
+  rememberAnswerView();root.innerHTML=requestResult(row);restoreAnswerView(true);
+  if(focusOnSummary)root.querySelector("summary")?.focus({preventScroll:true});
+}
+function syncRequestControls() {
+  const device=state.devices.find(d=>d.id===state.selectedDeviceId),form=$("#request-form");
+  if(!device||!form)return;
+  const active=state.requests.some(r=>r.device_id===device.id&&activeStatuses.includes(r.status));
+  form.querySelector('[type="submit"]').disabled=!device.online||!device.preset_available||active||state.pendingSettings.has(device.id)||state.pendingRequests.has(device.id);
+  $("#cancel-active").disabled=!active||state.pendingRequests.has(device.id);
+}
+async function cancelActiveRequest() {
+  const deviceId=state.selectedDeviceId;
+  const active=state.requests.find(r=>r.device_id===deviceId&&activeStatuses.includes(r.status));
+  if(!active||state.pendingRequests.has(deviceId))return;
+  state.pendingRequests.add(deviceId);syncRequestControls();
+  try {
+    await api(`/api/requests/${active.id}/cancel`,{method:"POST"});
+    if(state.page==="dashboard"&&state.selectedDeviceId===deviceId){await loadRequests(deviceId);if(state.page==="dashboard"&&state.selectedDeviceId===deviceId)renderDeviceDetail();}
+  }catch(e){notify(e.message,true);}
+  finally{state.pendingRequests.delete(deviceId);syncRequestControls();}
+}
 function requestResult(row) {
   const placeholder=["failed","cancelled"].includes(row.status)?"没有生成回答":row.status==="processing"?"正在整理回答...":"等待截图和回答...";
-  return `<div class="answer-panel"><div class="panel-title"><div><h4>回答</h4><p>${date(row.created_at)}${row.preset_name?" · "+esc(row.preset_name):""}</p></div>${statusLabel(row.status)}</div>
+  return `<div class="answer-panel" data-answer-id="${esc(row.id)}"><div class="panel-title"><div><h4>回答</h4><p>${date(row.created_at)}${row.preset_name?" · "+esc(row.preset_name):""}</p></div>${statusLabel(row.status)}</div>
     ${row.error?`<div class="request-status failed">${esc(row.error)}</div>`:""}
-    ${row.reasoning?`<details class="reasoning-box"><summary>查看推理过程</summary><div class="prose">${esc(row.reasoning)}</div></details>`:""}
-    <div class="prose answer-prose">${esc(row.answer||placeholder)}</div>
+    ${row.reasoning?`<details class="reasoning-box"><summary>推理内容</summary><div class="prose">${renderMarkdown(row.reasoning)}</div></details>`:""}
+    <div class="prose answer-prose">${row.answer?renderMarkdown(row.answer):`<p class="muted">${placeholder}</p>`}</div>
     ${row.screenshot_available?`<div class="toolbar" style="margin-top:14px"><a class="secondary-button" href="${esc(row.screenshot_url)}" target="_blank" rel="noreferrer">查看截图</a></div>`:""}</div>`;
 }
 async function renderDashboard() {
-  contentRoot().innerHTML=`<div class="page-intro"><div><h3>选择电脑，开始提问</h3><p class="muted">选择已连接的电脑和预设，截图后即可查看回答。</p></div>
-    <details><summary>添加其他账号的电脑</summary><form id="pair-form" class="inline-form"><label>邀请码<input class="code-input" name="connection_code" inputmode="numeric" maxlength="9" pattern="[0-9]{9}" placeholder="例如：123456789" required></label><button class="secondary-button" type="submit">申请使用</button></form></details></div>
-    <div class="dashboard-grid"><section class="panel device-sidebar"><div class="panel-title"><div><h3>电脑列表</h3><p id="device-count" class="muted"></p></div><button class="secondary-button" id="refresh-devices">刷新</button></div><div id="device-list">正在加载电脑...</div></section><section id="device-detail" class="panel"></section></div>`;
-  $("#pair-form").addEventListener("submit",pairDevice);
-  $("#refresh-devices").addEventListener("click",()=>refreshDevices().catch(e=>notify(e.message,true)));
+  contentRoot().innerHTML=`<div class="dashboard-grid"><section class="panel device-sidebar" aria-label="电脑列表"><div class="panel-title"><div><h3>电脑列表</h3><p id="device-count" class="muted"></p></div><button class="quiet-button menu-button" id="computer-menu" aria-label="电脑列表管理" aria-haspopup="dialog"><span class="hamburger" aria-hidden="true"></span></button></div><div id="device-list" tabindex="0">正在加载电脑...</div></section><section id="device-detail" class="panel" aria-label="截图问答操作台"></section></div>`;
+  $("#computer-menu").addEventListener("click",()=>controlsModal());
   await loadDevices();await loadRequests(state.selectedDeviceId);
   if(state.page!=="dashboard")return;
   renderDeviceList();renderDeviceDetail();
@@ -102,26 +136,19 @@ function renderDeviceList() {
 function renderDeviceDetail() {
   const root=$("#device-detail"),device=state.devices.find(d=>d.id===state.selectedDeviceId);if(!root)return;
   saveDeviceDraft();
+  rememberAnswerView();
   if(!device){root.innerHTML='<div class="detail-empty"><i class="ri ri-computer" aria-hidden="true"></i><strong>连接你的第一台电脑</strong><span>打开客户端并登录同一账号，<br>再在这里选择预设、开始提问。</span></div>';return;}
-  const active=state.requests.find(r=>r.device_id===device.id&&["waiting_capture","capturing","uploading","processing"].includes(r.status));
   const own=device.owner_id===state.user.id||state.user.role==="admin";
   const latest=state.requests.find(r=>r.device_id===device.id);
-  root.innerHTML=`<div class="panel-title"><div class="device-heading"><span class="device-avatar"><i class="ri ri-computer" aria-hidden="true"></i></span><div><h3>${esc(device.name)}</h3>${statusLabel(device.online?"online":"offline")} <span class="muted"> · ${esc(device.owner_name)}</span></div></div><div class="toolbar">${own?'<button class="secondary-button" id="manage-device"><i class="ri ri-settings" aria-hidden="true"></i>电脑设置</button><button class="secondary-button" id="share-device"><i class="ri ri-share" aria-hidden="true"></i>共享</button>':'<button class="secondary-button" id="remove-device">从列表移除</button>'}</div></div>
-    <div class="preset-summary">${own?`<div class="preset-select-row"><label>本次使用的预设<select id="device-preset" data-device-id="${device.id}" disabled><option>正在加载预设...</option></select></label><button class="secondary-button" id="manage-presets">管理预设</button></div>`:`<strong>当前预设：${esc(device.preset?.name||"尚未选择")}</strong>`}<p class="muted">${esc(device.preset?.description||(own?"选择后自动保存到这台电脑。":"由电脑主人设置预设。"))}</p></div>
-    ${!device.preset_available?`<p class="request-status failed">${own?"请选择可用预设后开始提问；没有合适的预设时，可点击管理预设创建。":"请联系电脑主人选择可用预设。"}</p>`:""}
+  root.innerHTML=`<div class="console-controls"><div class="panel-title"><div class="device-heading"><span class="device-avatar"><i class="ri ri-computer" aria-hidden="true"></i></span><div><h3>${esc(device.name)}</h3><div class="console-meta">${statusLabel(device.online?"online":"offline")}<span class="muted">预设：${esc(device.preset?.name||"尚未选择")}</span></div></div></div><button class="quiet-button menu-button" id="console-menu" aria-label="问答设置" aria-haspopup="dialog"><span class="hamburger" aria-hidden="true"></span></button></div>
+    ${!device.preset_available?`<p class="request-status failed">${own?"请在右上角的问答设置中选择可用预设。":"请联系电脑主人选择可用预设。"}</p>`:""}
     ${!device.online?'<p class="request-status">这台电脑尚未连接，请打开客户端并登录。</p>':""}
-    <form id="request-form" data-device-id="${device.id}" class="control-grid"><label>这次想问什么（可不填）<textarea name="question" rows="3" maxlength="5000" placeholder="例如：请解释屏幕上这道题的解法"></textarea></label><div class="control-actions"><button class="primary-button" type="submit" ${device.online&&device.preset_available&&!state.pendingSettings.has(device.id)?"":"disabled"}><i class="ri ri-screenshot" aria-hidden="true"></i>截图并提问</button><label class="checkbox-line"><input type="checkbox" name="force"> 停止上一条，重新提问</label>${active?'<button type="button" class="danger-button" id="cancel-active">停止回答</button>':""}</div></form>
-    <div id="latest-request">${latest?requestResult(latest):'<div class="detail-empty"><i class="ri ri-screenshot" aria-hidden="true"></i><strong>准备好后，点击截图并提问</strong><span>回答和截图会保存在问答历史中。</span></div>'}</div>`;
+    <form id="request-form" data-device-id="${device.id}" class="control-grid"><label class="sr-only" for="question-input">这次想问什么（可不填）</label><textarea id="question-input" name="question" rows="2" maxlength="5000" placeholder="这次想问什么？例如：请解释屏幕上这道题的解法（可不填）"></textarea><div class="control-actions"><button class="primary-button" type="submit" disabled><i class="ri ri-screenshot" aria-hidden="true"></i>截图并提问</button><button type="button" class="danger-button" id="cancel-active" disabled>停止上一条</button></div></form></div>
+    <div id="latest-request" tabindex="0" aria-label="当前回答">${latest?requestResult(latest):'<div class="detail-empty"><i class="ri ri-screenshot" aria-hidden="true"></i><strong>准备好后，点击截图并提问</strong><span>回答和截图会保存在问答历史中。</span></div>'}</div>`;
   restoreDeviceDraft();$("#request-form").addEventListener("submit",submitRequest);
-  if(own){
-    $("#manage-device").addEventListener("click",()=>computerModal(device));
-    $("#share-device").addEventListener("click",()=>sharingModal(device));
-    $("#manage-presets").addEventListener("click",()=>navigate("presets"));
-    loadComputerPresets(device);
-  }else $("#remove-device").addEventListener("click",()=>deviceAction("unpair"));
-  if($("#cancel-active"))$("#cancel-active").addEventListener("click",async()=>{
-    try {await api("/api/requests/"+active.id+"/cancel",{method:"POST"});await loadRequests(device.id);renderDeviceDetail();}catch(e){notify(e.message,true);}
-  });
+  $("#console-menu").addEventListener("click",()=>controlsModal(device));
+  $("#cancel-active").addEventListener("click",cancelActiveRequest);
+  restoreAnswerView();syncRequestControls();
 }
 async function loadComputerPresets(device) {
   const select=$("#device-preset");
@@ -131,12 +158,28 @@ async function loadComputerPresets(device) {
     select.innerHTML='<option value="">请选择预设</option>'+result.presets.map(p=>`<option value="${p.id}" ${p.id===device.preset?.id?"selected":""}>${esc(p.name)} · ${p.is_global?"公共":"个人"}${result.presets.filter(x=>x.name===p.name).length>1?" · #"+p.id:""}</option>`).join("");
     select.disabled=false;
     select.addEventListener("change",async()=>{
-      if(!select.value)return;
+      if(!select.value){select.value=String(state.devices.find(d=>d.id===device.id)?.preset?.id||"");return;}
       select.disabled=true;saveDeviceDraft();state.pendingSettings.add(device.id);const ask=$('#request-form [type="submit"]');if(ask)ask.disabled=true;
-      try {await api(`/api/devices/${device.id}/settings`,{method:"PUT",body:JSON.stringify({preset_id:Number(select.value)})});notify("预设已更新");state.pendingSettings.delete(device.id);await refreshDevices();}
-      catch(e){state.pendingSettings.delete(device.id);notify(e.message,true);if(state.selectedDeviceId===device.id&&state.page==="dashboard")renderDeviceDetail();}
+      try {await api(`/api/devices/${device.id}/settings`,{method:"PUT",body:JSON.stringify({preset_id:Number(select.value)})});notify("预设已更新");await refreshDevices();}
+      catch(e){select.value=String(state.devices.find(d=>d.id===device.id)?.preset?.id||"");notify(e.message,true);}
+      finally{state.pendingSettings.delete(device.id);select.disabled=false;syncRequestControls();}
     });
   }catch(e){if(select.isConnected)select.innerHTML='<option>加载失败，请刷新电脑列表</option>';notify(e.message,true);}
+}
+function controlsModal(device) {
+  const own=device&&(device.owner_id===state.user.id||state.user.role==="admin");
+  modal(`<h3>${device?"问答设置 · "+esc(device.name):"电脑列表管理"}</h3><div class="settings-stack">
+    ${device?own?`<label>本次使用的预设<select id="device-preset" data-device-id="${device.id}" disabled><option>正在加载预设...</option></select></label><div class="settings-actions"><button class="secondary-button" id="manage-presets">管理预设</button><button class="secondary-button" id="manage-device">电脑设置</button><button class="secondary-button" id="share-device">共享管理</button></div>`:`<p>当前预设：${esc(device.preset?.name||"尚未选择")}</p><button class="secondary-button" id="remove-device">从列表移除</button>`:""}
+    <div class="settings-section"><button class="secondary-button" id="refresh-devices">刷新电脑列表</button></div>
+    <form id="pair-form" class="stack-form settings-section"><label>添加其他账号的电脑<input class="code-input" name="connection_code" inputmode="numeric" maxlength="9" pattern="[0-9]{9}" placeholder="邀请码，例如：123456789" required></label><button class="secondary-button" type="submit">申请使用</button></form></div>`);
+  $("#pair-form").addEventListener("submit",pairDevice);
+  $("#refresh-devices").addEventListener("click",async e=>{const b=e.currentTarget;b.disabled=true;try{await refreshDevices();notify("电脑列表已刷新");}catch(err){notify(err.message,true);}finally{b.disabled=false;}});
+  if(own){
+    loadComputerPresets(device);
+    $("#manage-presets").addEventListener("click",()=>{closeModal();navigate("presets");});
+    $("#manage-device").addEventListener("click",()=>computerModal(device));
+    $("#share-device").addEventListener("click",()=>sharingModal(device));
+  }else if(device)$("#remove-device").addEventListener("click",()=>deviceAction("unpair",device.id));
 }
 function computerModal(device) {
   modal(`<h3>电脑设置</h3><form id="computer-settings-form" class="stack-form"><label>电脑名称<input name="name" value="${esc(device.name)}" maxlength="120" placeholder="例如：书房电脑" required></label><p class="muted">电脑编号：${device.id} · 客户端版本：${esc(device.client_version||"尚未连接")}</p><p id="computer-message" class="form-message"></p><div class="modal-actions"><button type="button" class="secondary-button" onclick="closeModal()">取消</button><button class="primary-button" type="submit">保存名称</button></div></form><hr><div class="toolbar"><button id="disconnect-device" class="secondary-button">断开连接</button><button id="delete-device" class="danger-button">删除电脑</button></div>`);
@@ -158,16 +201,17 @@ async function loadSharing(deviceId){
 }
 async function pairDevice(e){e.preventDefault();try{var r=await api("/api/devices/pair",{method:"POST",body:JSON.stringify({connection_code:new FormData(e.currentTarget).get("connection_code")})});if(r.status==="approved"){notify("设备已授权");await loadDevices();renderDashboard();return;}notify("申请已发送，请等待电脑主人在网页确认");var id=r.pair_request_id,timer=setInterval(async function(){try{var x=await api("/api/pairings/"+id);if(x.status!=="pending"){clearInterval(timer);notify(x.status==="approved"?"电脑主人已授权":({rejected:"对方未同意",expired:"申请已过期"})[x.status]||"申请已结束",x.status!=="approved");await refreshDevices();}}catch(_){clearInterval(timer);}},1000);}catch(err){notify(err.message,true);}}
 async function submitRequest(e) {
-  e.preventDefault();const form=e.currentTarget,deviceId=state.selectedDeviceId,v=values(form),button=form.querySelector('[type="submit"]');
-  if(state.pendingSettings.has(deviceId))return;
-  button.disabled=true;
+  e.preventDefault();const form=e.currentTarget,deviceId=state.selectedDeviceId,v=values(form);
+  if(state.pendingSettings.has(deviceId)||state.pendingRequests.has(deviceId))return;
+  state.pendingRequests.add(deviceId);syncRequestControls();
   try {
-    const r=await api("/api/devices/"+deviceId+"/requests",{method:"POST",body:JSON.stringify({question:v.question,force:form.elements.force.checked})});
+    const r=await api("/api/devices/"+deviceId+"/requests",{method:"POST",body:JSON.stringify({question:v.question})});
     const live=state.requests.find(row=>row.id===r.request.id);
     state.requests=state.requests.filter(row=>row.id!==r.request.id);state.requests.unshift(live||r.request);
     delete state.deviceDrafts[deviceId];form.reset();const currentForm=$("#request-form");if(currentForm?.dataset.deviceId===String(deviceId))currentForm.reset();notify("正在截图，请稍候");
     if(state.page==="dashboard"&&state.selectedDeviceId===deviceId)renderDeviceDetail();
-  }catch(err){notify(err.message,true);button.disabled=false;}
+  }catch(err){notify(err.message,true);}
+  finally{state.pendingRequests.delete(deviceId);syncRequestControls();}
 }
 async function deviceAction(action,deviceId=state.selectedDeviceId) {
   const d=state.devices.find(x=>x.id===deviceId);if(!d)return;
@@ -180,10 +224,10 @@ async function deviceAction(action,deviceId=state.selectedDeviceId) {
     await refreshDevices();
   }catch(err){notify(err.message,true);}
 }
-async function renderHistory(){contentRoot().innerHTML='<div class="page-intro"><div><span class="eyebrow">历史记录</span><h3>问答历史</h3></div><button id="refresh-history" class="secondary-button">刷新记录</button></div><section class="panel"><div id="history-list"><p class="muted">正在加载...</p></div></section>';$("#refresh-history").addEventListener("click",renderHistory);try{await loadRequests();var list=$("#history-list");if(!list)return;list.innerHTML=state.requests.length?state.requests.map(function(r){return '<article class="history-item" data-request-id="'+r.id+'"><div class="history-head"><strong>'+esc(r.device_name)+'</strong>'+statusLabel(r.status)+'</div><div class="history-question">'+esc(r.question||"未填写补充问题")+'</div><div class="muted">'+date(r.created_at)+' · '+esc(r.preset_name||"屏幕问答")+'</div></article>';}).join(""): '<p class="muted">暂无记录</p>';list.querySelectorAll("[data-request-id]").forEach(function(n){n.addEventListener("click",function(){var r=state.requests.find(function(x){return x.id===n.dataset.requestId;});if(r){modal('<h3>问答详情</h3>'+requestResult(r)+'<div class="modal-actions"><button class="secondary-button" onclick="closeModal()">关闭</button></div>');}});});}catch(err){notify(err.message,true);}}
+async function renderHistory(){contentRoot().innerHTML='<div class="page-toolbar"><button id="refresh-history" class="secondary-button">刷新记录</button></div><section class="panel"><div id="history-list"><p class="muted">正在加载...</p></div></section>';$("#refresh-history").addEventListener("click",renderHistory);try{await loadRequests();var list=$("#history-list");if(!list)return;list.innerHTML=state.requests.length?state.requests.map(function(r){return '<article class="history-item" data-request-id="'+r.id+'"><div class="history-head"><strong>'+esc(r.device_name)+'</strong>'+statusLabel(r.status)+'</div><div class="history-question">'+esc(r.question||"未填写补充问题")+'</div><div class="muted">'+date(r.created_at)+' · '+esc(r.preset_name||"屏幕问答")+'</div></article>';}).join(""): '<p class="muted">暂无记录</p>';list.querySelectorAll("[data-request-id]").forEach(function(n){n.addEventListener("click",function(){var r=state.requests.find(function(x){return x.id===n.dataset.requestId;});if(r){modal('<h3>问答详情</h3>'+requestResult(r)+'<div class="modal-actions"><button class="secondary-button" onclick="closeModal()">关闭</button></div>');}});});}catch(err){notify(err.message,true);}}
 
 async function renderPresets() {
-  contentRoot().innerHTML=`<div class="page-intro"><div><h3>把常用设置保存为预设</h3><p class="muted">公共预设可以直接使用；也可以创建自己的预设。在截图问答页选择后即可使用。</p></div><button class="primary-button" id="new-preset">新建预设</button></div><section class="preset-catalog" id="preset-list">正在加载预设...</section>`;
+  contentRoot().innerHTML=`<div class="page-toolbar"><button class="primary-button" id="new-preset">新建预设</button></div><section class="preset-catalog" id="preset-list">正在加载预设...</section>`;
   $("#new-preset").addEventListener("click",()=>presetModal());
   const result=await api("/api/presets");if(state.page!=="presets")return;state.presets=result.items;
   const list=$("#preset-list");
@@ -232,13 +276,13 @@ function presetModal(p) {
   });
 }
 
-async function renderUsers(){if(state.user.role!=="admin")return navigate("dashboard");contentRoot().innerHTML='<div class="page-intro"><div><span class="eyebrow">账号管理</span><h3>账号管理</h3></div><button class="secondary-button" id="refresh-users">刷新</button></div><section class="panel"><div id="user-table" class="data-table-wrap"><p class="muted">正在加载...</p></div></section>';$("#refresh-users").addEventListener("click",renderUsers);var rows=(await api("/api/admin/users")).items;$("#user-table").innerHTML='<table><thead><tr><th>用户</th><th>角色</th><th>状态</th><th>注册备注</th><th>创建时间</th><th>操作</th></tr></thead><tbody>'+rows.map(function(r){return '<tr><td><strong>'+esc(r.display_name)+'</strong><div class="muted">'+esc(r.username)+'</div></td><td>'+(r.role==="admin"?"管理员":"普通用户")+'</td><td>'+statusLabel(r.status)+(r.locked_until?'<div class="muted">锁定至 '+date(r.locked_until)+'</div>':'')+'</td><td>'+esc(r.registration_note)+'</td><td>'+date(r.created_at)+'</td><td><div class="toolbar">'+(r.status==="pending"?'<button class="primary-button" data-user-action="approve" data-user-id="'+r.id+'">批准</button>':'')+(r.status==="active"&&r.id!==state.user.id?'<button class="danger-button" data-user-action="disable" data-user-id="'+r.id+'">禁用</button>':'')+(r.status==="disabled"?'<button class="secondary-button" data-user-action="enable" data-user-id="'+r.id+'">启用</button>':'')+'<button class="secondary-button" data-user-action="unlock" data-user-id="'+r.id+'">解锁</button><button class="secondary-button" data-user-action="reset" data-user-id="'+r.id+'">重置密码</button>'+(r.id!==state.user.id&&r.status!=="deleted"?'<button class="danger-button" data-user-action="delete" data-user-id="'+r.id+'">删除</button>':'')+'</div></td></tr>';}).join("")+'</tbody></table>';$("#user-table").querySelectorAll("[data-user-action]").forEach(function(b){b.addEventListener("click",function(){userAction(Number(b.dataset.userId),b.dataset.userAction);});});}
+async function renderUsers(){if(state.user.role!=="admin")return navigate("dashboard");contentRoot().innerHTML='<div class="page-toolbar"><button class="secondary-button" id="refresh-users">刷新</button></div><section class="panel"><div id="user-table" class="data-table-wrap"><p class="muted">正在加载...</p></div></section>';$("#refresh-users").addEventListener("click",renderUsers);var rows=(await api("/api/admin/users")).items;$("#user-table").innerHTML='<table><thead><tr><th>用户</th><th>角色</th><th>状态</th><th>注册备注</th><th>创建时间</th><th>操作</th></tr></thead><tbody>'+rows.map(function(r){return '<tr><td><strong>'+esc(r.display_name)+'</strong><div class="muted">'+esc(r.username)+'</div></td><td>'+(r.role==="admin"?"管理员":"普通用户")+'</td><td>'+statusLabel(r.status)+(r.locked_until?'<div class="muted">锁定至 '+date(r.locked_until)+'</div>':'')+'</td><td>'+esc(r.registration_note)+'</td><td>'+date(r.created_at)+'</td><td><div class="toolbar">'+(r.status==="pending"?'<button class="primary-button" data-user-action="approve" data-user-id="'+r.id+'">批准</button>':'')+(r.status==="active"&&r.id!==state.user.id?'<button class="danger-button" data-user-action="disable" data-user-id="'+r.id+'">禁用</button>':'')+(r.status==="disabled"?'<button class="secondary-button" data-user-action="enable" data-user-id="'+r.id+'">启用</button>':'')+'<button class="secondary-button" data-user-action="unlock" data-user-id="'+r.id+'">解锁</button><button class="secondary-button" data-user-action="reset" data-user-id="'+r.id+'">重置密码</button>'+(r.id!==state.user.id&&r.status!=="deleted"?'<button class="danger-button" data-user-action="delete" data-user-id="'+r.id+'">删除</button>':'')+'</div></td></tr>';}).join("")+'</tbody></table>';$("#user-table").querySelectorAll("[data-user-action]").forEach(function(b){b.addEventListener("click",function(){userAction(Number(b.dataset.userId),b.dataset.userAction);});});}
 async function userAction(id,action){if(action==="delete"){if(!confirm("确定删除账号？"))return;try{await api("/api/admin/users/"+id,{method:"DELETE"});notify("账号已删除");renderUsers();}catch(err){notify(err.message,true);}return;}var body={};if(action==="approve"||action==="enable")body.status="active";if(action==="disable")body.status="disabled";if(action==="unlock")body.unlock=true;if(action==="reset"){var p=prompt("请输入新的临时密码");if(!p)return;body.reset_password=p;}try{await api("/api/admin/users/"+id,{method:"PATCH",body:JSON.stringify(body)});notify("账号已更新");renderUsers();}catch(err){notify(err.message,true);}}
 async function renderAudit() {
   if(state.user.role!=="admin")return navigate("dashboard");
   const actions={"user.register":"申请注册", "auth.login":"登录账号", "auth.login_failed":"登录未成功", "auth.logout":"退出登录", "auth.password_changed":"修改密码", "device.pair_requested":"申请使用电脑", "device.unpaired":"取消电脑共享", "device.disconnected":"断开电脑", "request.created":"截图并提问", "request.cancelled":"停止回答", "user.updated":"更新账号设置", "user.deleted":"删除账号", "device.settings_updated":"修改电脑设置", "device.invitation_created":"生成邀请码", "device.sharing_decided":"处理共享申请"};
   const targets={user:"用户",device:"设备",request:"请求"};
-  contentRoot().innerHTML='<div class="page-intro"><h3>审计日志</h3><button class="secondary-button" id="refresh-audit">刷新</button></div><section class="panel"><div id="audit-table" class="data-table-wrap">正在加载...</div></section>';
+  contentRoot().innerHTML='<div class="page-toolbar"><button class="secondary-button" id="refresh-audit">刷新</button></div><section class="panel"><div id="audit-table" class="data-table-wrap">正在加载...</div></section>';
   $("#refresh-audit").addEventListener("click",renderAudit);
   const rows=(await api("/api/admin/audit-logs")).items;if(state.page!=="audit")return;
   $("#audit-table").innerHTML='<table><thead><tr><th>时间</th><th>账号</th><th>操作</th><th>对象</th><th>IP 地址</th></tr></thead><tbody>'+rows.map(r=>`<tr><td>${date(r.created_at)}</td><td>${esc(r.username==="system"?"系统":r.username)}</td><td>${esc(actions[r.action]||r.action)}<div class="muted">${esc(r.action)}</div></td><td>${esc(targets[r.target_type]||r.target_type)} ${esc(r.target_id||"")}</td><td>${esc(r.ip_address||"")}</td></tr>`).join("")+'</tbody></table>';
