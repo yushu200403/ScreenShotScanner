@@ -1,6 +1,6 @@
 from .adapters import AdapterError, stream_profile
 from .extensions import db
-from .models import QuestionRequest, utcnow, as_utc
+from .models import QuestionRequest, RequestPreset, utcnow, as_utc
 from .runtime import add_cancel_event, broadcast_user, get_cancel_event, remove_cancel_event
 
 
@@ -14,8 +14,10 @@ def _notify(row, event="request_update", delta=None, reasoning_delta=None):
 
 
 def serialize_request(row):
+    preset = db.session.get(RequestPreset, row.id)
     return {
         "id": row.id,
+        "preset_name": preset.name if preset else "",
         "device_id": row.device_id,
         "status": row.status,
         "model_name": row.model_name,

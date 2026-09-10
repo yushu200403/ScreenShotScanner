@@ -11,6 +11,7 @@ import connection
 import screenshot
 from connection import ClientConnection
 from secure_store import SecureStore
+from version import APP_VERSION
 
 
 def client():
@@ -51,7 +52,7 @@ def test_cancel_allows_immediate_next_capture(monkeypatch):
     def post(url, **kwargs):
         uploads.append((url, kwargs["headers"]["Authorization"]))
         done.set()
-        return SimpleNamespace(status_code=202, close=lambda: None)
+        return SimpleNamespace(status_code=202, headers={"X-Server-Version": APP_VERSION}, close=lambda: None)
 
     monkeypatch.setattr(connection, "capture_current_monitor", capture)
     monkeypatch.setattr(connection.requests, "post", post)

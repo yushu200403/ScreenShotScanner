@@ -27,39 +27,26 @@ def test_registration_requires_note_and_admin_approval(client):
     assert login(client, "new-user", "password-123").status_code == 200
 
 
-def test_credential_plaintext_is_returned_once(client):
-    response = login(client, "admin", "admin-password")
-    token = csrf(response)
-    created = client.post("/api/credentials", json={"name": "Test PC"},
-                          headers={"X-CSRF-Token": token})
-    assert created.status_code == 201
-    assert created.get_json()["token"]
-    listing = client.get("/api/credentials").get_json()["items"]
-    assert listing[0]["name"] == "Test PC"
-    assert "token" not in listing[0]
+def test_retired_configuration_routes_require_upgrade(client):
+    for path in ("credentials", "models", "prompts"):
+        assert client.get("/api/" + path).status_code == 410
 
 
-def test_model_api_key_is_masked_and_encrypted(client, app):
+def test_preset_key_is_hidden_and_encrypted(client, app):
     response = login(client, "admin", "admin-password")
     token = csrf(response)
-    created = client.post("/api/models", json={
-        "name": "Responses Test",
-        "provider": "openai_responses",
-        "endpoint": "https://api.example.com/v1/responses",
-        "api_key": "secret-api-key-1234",
-        "models": ["vision-test"],
-        "timeout_seconds": 90,
-        "options": {"reasoning_effort": "high"},
-        "is_global": True,
+    created = client.post("/api/presets", json={
+        "name": "回答预设", "prompt": "解释这张图", "provider": "openai_responses",
+        "endpoint": "https://api.example.com/v1/responses", "api_key": "secret-api-key-1234",
+        "model_name": "vision-test", "timeout_seconds": 90, "is_global": True,
     }, headers={"X-CSRF-Token": token})
     assert created.status_code == 201
-    payload = created.get_json()["model"]
-    assert payload["api_key_last4"] == "1234"
+    payload = created.json["preset"]
+    assert payload["api_key_configured"]
     assert "api_key" not in payload
-
     from app.models import ModelProfile
     from app.security import decrypt_secret
     with app.app_context():
-        row = ModelProfile.query.filter_by(name="Responses Test").one()
+        row = ModelProfile.query.filter_by(name="回答预设").one()
         assert row.api_key_ciphertext != "secret-api-key-1234"
         assert decrypt_secret(row.api_key_ciphertext) == "secret-api-key-1234"

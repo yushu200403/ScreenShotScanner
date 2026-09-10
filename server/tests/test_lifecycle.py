@@ -14,6 +14,7 @@ from app.models import ClientCredential, Device, DeviceAccess, PairRequest, Ques
 from app.realtime import _authenticate_device, _handle_approval, _handle_device_message
 from app.runtime import register_device, unregister_device, add_cancel_event, remove_cancel_event
 from app.security import hash_connection_code, hash_token, password_hash
+from app.versioning import APP_VERSION
 
 
 class Socket:
@@ -32,19 +33,23 @@ class Socket:
 def flow(app, client):
     login = client.post("/api/auth/login", json={"username": "admin", "password": "admin-password"}).json
     headers = {"X-CSRF-Token": login["csrf_token"]}
-    credential = client.post("/api/credentials", json={"name": "测试设备"}, headers=headers).json
-    model = client.post("/api/models", json={"name": "测试模型", "provider": "openai_chat",
+    desktop = client.post("/api/desktop/login", headers={"X-Client-Version": APP_VERSION},
+                          json={"username": "admin", "password": "admin-password",
+                                "device_id": "device123456789012345", "device_name": "测试电脑"}).json
+    token = desktop["session_token"]
+    preset = client.post("/api/presets", json={"name": "测试预设", "prompt": "解释屏幕内容", "provider": "openai_chat",
                         "endpoint": "https://example.com/v1/chat/completions", "api_key": "测试密钥",
-                        "models": ["vision"]}, headers=headers).json["model"]
+                        "model_name": "vision"}, headers=headers).json["preset"]
+    settings = client.put("/api/desktop/settings", headers={"X-Client-Version": APP_VERSION, "Authorization": "Bearer " + token},
+                          json={"name": "测试电脑", "preset_id": preset["id"]})
+    assert settings.status_code == 200
     socket = Socket()
     with app.app_context():
-        device = _authenticate_device(socket, {"token": credential["token"],
+        device = _authenticate_device(socket, {"token": token, "client_version": APP_VERSION,
                 "device_id": "device123456789012345", "connection_code": "123456789"})
-        device_id = device.id
-    prompt = client.get("/api/prompts").json["items"][0]
-    payload = {"prompt_id": prompt["id"], "model_profile_id": model["id"], "model_name": "vision"}
-    result = {"headers": headers, "token": credential["token"], "credential_id": credential["credential"]["id"],
-              "device_id": device_id, "payload": payload, "socket": socket}
+        device_id, credential_id = device.id, device.credential_id
+    result = {"headers": headers, "token": token, "credential_id": credential_id,
+              "device_id": device_id, "payload": {"question": "解释屏幕内容"}, "socket": socket, "preset_id": preset["id"]}
     yield result
     unregister_device("device123456789012345", socket)
 
@@ -62,7 +67,7 @@ def picture():
 
 def upload(client, flow, request_id, data=None):
     return client.post(f"/api/device/requests/{request_id}/screenshot",
-                       headers={"Authorization": "Bearer " + flow["token"]},
+                       headers={"Authorization": "Bearer " + flow["token"], "X-Client-Version": APP_VERSION},
                        data={"image": (BytesIO(picture() if data is None else data), "截图.jpg")})
 
 
@@ -96,12 +101,12 @@ def test_unpair_expires_approval_and_cancels_upload(app, client, flow):
         assert db.session.get(PairRequest, pair["pair_request_id"]).status == "expired"
         assert DeviceAccess.query.filter_by(revoked_at=None).count() == 0
     assert upload(client, flow, rid).json["error"]["code"] == "request_cancelled"
-    assert ask(client, flow).json["error"]["code"] == "code_invalidated"
+    assert ask(client, flow).status_code == 202
 
 
-def test_revoke_closes_device_and_cancels_requests(client, flow):
+def test_delete_closes_device_and_cancels_requests(client, flow):
     rid = ask(client, flow).json["request"]["id"]
-    result = client.delete(f"/api/credentials/{flow['credential_id']}", headers=flow["headers"])
+    result = client.delete(f"/api/devices/{flow['device_id']}", headers=flow["headers"])
     assert result.status_code == 200
     assert flow["socket"].closed
     assert client.get(f"/api/requests/{rid}").json["request"]["status"] == "cancelled"
@@ -110,7 +115,7 @@ def test_revoke_closes_device_and_cancels_requests(client, flow):
 
 def test_reset_ack_can_be_retried(app, flow):
     with app.app_context():
-        hello = {"token": flow["token"], "device_id": "device123456789012345", "connection_code": "987654321",
+        hello = {"client_version": APP_VERSION, "token": flow["token"], "device_id": "device123456789012345", "connection_code": "987654321",
                  "reset_code": True, "previous_connection_code": "123456789"}
         assert _authenticate_device(flow["socket"], hello) is not None
         assert _authenticate_device(flow["socket"], hello) is not None
@@ -124,7 +129,7 @@ def test_disabled_owner_cannot_connect_or_upload(app, client, flow):
         credential.owner.status = "disabled"
         db.session.commit()
         socket = Socket()
-        assert _authenticate_device(socket, {"token": flow["token"]}) is None
+        assert _authenticate_device(socket, {"token": flow["token"], "client_version": APP_VERSION}) is None
         assert socket.closed
     assert upload(client, flow, rid).status_code == 401
 
@@ -197,7 +202,7 @@ def test_rate_limit_service_failure_is_explicit(client, monkeypatch):
     monkeypatch.setattr("app.security.redis.Redis.from_url", unavailable)
     result = client.post("/api/auth/login", json={"username": "admin", "password": "admin-password"})
     assert result.status_code == 503
-    assert "限流" in result.json["error"]["message"]
+    assert "稍后再试" in result.json["error"]["message"]
 
 
 def test_retention_command_preserves_device_state(app, client, flow, tmp_path):

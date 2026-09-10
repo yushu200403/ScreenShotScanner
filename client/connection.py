@@ -8,6 +8,7 @@ import requests
 import websocket
 
 from screenshot import capture_current_monitor
+from version import APP_VERSION
 
 
 class ClientConnection:
@@ -19,6 +20,7 @@ class ClientConnection:
         self.server_url = ""
         self.token = ""
         self.device_id = ""
+        self.device_name = ""
         self.connection_code = ""
         self.reset_on_connect = False
         self.previous_connection_code = ""
@@ -38,11 +40,11 @@ class ClientConnection:
         value = value.strip().rstrip("/")
         parsed = urlparse(value)
         if parsed.scheme not in {"https", "http"} or not parsed.netloc:
-            raise ValueError("服务器地址必须是完整的 HTTPS 地址")
+            raise ValueError("请填写完整服务器地址，例如 https://example.com")
         if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost"}:
-            raise ValueError("公网服务器必须使用 HTTPS/WSS")
+            raise ValueError("请使用以 https:// 开头的服务器地址")
         if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {"", "/"}:
-            raise ValueError("服务器地址只能包含协议、主机和端口")
+            raise ValueError("请只填写服务器首页地址，不要附带页面路径或登录信息")
         try:
             parsed.port
         except ValueError as exc:
@@ -96,8 +98,8 @@ class ClientConnection:
             "type": "hello",
             "token": self.token,
             "device_id": self.device_id,
-            "device_name": socket.gethostname(),
-            "client_version": "0.1.0",
+            "device_name": self.device_name or socket.gethostname(),
+            "client_version": APP_VERSION,
             "platform": platform.platform(),
             "connection_code": self.connection_code,
             "reset_code": self.reset_on_connect,
@@ -122,6 +124,11 @@ class ClientConnection:
             return
         message_type = message.get("type")
         if message_type in {"hello_ack", "code_reset_ack"}:
+            if message_type == "hello_ack" and message.get("server_version") != APP_VERSION:
+                self.fatal_error = True
+                self.on_status("客户端与服务器版本不同，请更新后重新登录", False)
+                ws.close()
+                return
             self.connection_code = message.get("connection_code", self.connection_code)
             self.reset_on_connect = False
             self.previous_connection_code = ""
@@ -143,7 +150,7 @@ class ClientConnection:
             return
         if message_type == "code_invalidated":
             self.on_code_invalidated()
-            self.on_status("连接码已失效，请点击重置连接码", True)
+            self.on_status("邀请码已停用，同账号仍可使用这台电脑", True)
             return
         if message_type == "server_disconnect":
             self.fatal_error = True
@@ -153,7 +160,7 @@ class ClientConnection:
         if message_type == "error":
             code = message.get("code")
             self.on_status(str(message.get("message") or "服务端拒绝连接"), False)
-            if code in {"device_auth_failed", "credential_bound", "code_invalidated", "code_mismatch", "code_reset_denied", "invalid_code", "code_in_use"}:
+            if code in {"version_mismatch", "device_auth_failed", "credential_bound", "code_invalidated", "code_mismatch", "code_reset_denied", "invalid_code", "code_in_use"}:
                 self.fatal_error = True
                 if code == "code_invalidated":
                     self.on_code_invalidated()
@@ -216,8 +223,13 @@ class ClientConnection:
                 return
             send({"type": "device_status", "request_id": request_id, "status": "uploading"})
             response = requests.post(server_url + "/api/device/requests/" + request_id + "/screenshot",
-                                     headers={"Authorization": "Bearer " + token},
-                                     files={"image": ("screenshot.jpg", image, "image/jpeg")}, timeout=(10, 45))
+                                     headers={"Authorization": "Bearer " + token, "X-Client-Version": APP_VERSION},
+                                     files={"image": ("screenshot.jpg", image, "image/jpeg")}, timeout=(10, 45), allow_redirects=False)
+            if response.headers.get("X-Server-Version") != APP_VERSION:
+                self.fatal_error = True
+                self.on_status("客户端与服务器版本不同，请更新客户端", False)
+                ws.close()
+                return
             if response.status_code >= 400:
                 try:
                     error_data = response.json().get("error", {})
@@ -225,13 +237,17 @@ class ClientConnection:
                     message = error_data.get("message", "截图上传失败")
                 except ValueError:
                     error_code = None
-                    message = "截图上传失败，HTTP " + str(response.status_code)
+                    message = "截图上传没有成功，请稍后重试"
+                if error_code == "version_mismatch":
+                    self.fatal_error = True
+                    self.on_status("客户端与服务器版本不同，请更新客户端", False)
+                    ws.close()
                 if error_code == "request_cancelled":
                     send({"type": "request_cancelled", "request_id": request_id})
                 elif error_code != "screenshot_already_uploaded":
                     send({"type": "capture_failed", "request_id": request_id, "error": message})
-        except Exception as exc:
-            send({"type": "capture_failed", "request_id": request_id, "error": str(exc)})
+        except Exception:
+            send({"type": "capture_failed", "request_id": request_id, "error": "截图或上传没有成功，请检查网络后重试"})
         finally:
             if "response" in locals():
                 response.close()

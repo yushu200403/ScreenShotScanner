@@ -13,6 +13,9 @@ __pycache__/
 venv/
 client/build/
 client/dist/
+client/.venv-build/
+client/.pyinstaller-tmp/
+client/ScreenShotScannerClient.exe
 client/*.spec
 server/instance/
 .DS_Store

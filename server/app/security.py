@@ -15,7 +15,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.exceptions import ServiceUnavailable
 
 from .extensions import db
-from .models import AuditLog, User, utcnow
+from .models import AuditLog, ClientSession, User, is_expired, utcnow
 
 
 def error(message, status=400, code="bad_request"):
@@ -41,7 +41,7 @@ def rate_limited(scope, identity, limit, window_seconds):
             client.expire(key, window_seconds)
         return int(count) > limit
     except redis.RedisError as exc:
-        raise ServiceUnavailable("限流服务暂时不可用，请稍后重试") from exc
+        raise ServiceUnavailable("服务器暂时繁忙，请稍后再试") from exc
 
 
 def user_from_session():
@@ -87,7 +87,7 @@ def require_csrf():
 
 def csrf_required():
     if not require_csrf():
-        return error("CSRF 校验失败", 403, "csrf_failed")
+        return error("页面已过期，请刷新后重试", 403, "csrf_failed")
     return None
 
 
@@ -124,6 +124,14 @@ def new_credential_token():
 
 def new_connection_code():
     return f"{secrets.randbelow(1_000_000_000):09d}"
+
+
+def client_session_valid(credential):
+    if not credential or credential.revoked_at or credential.owner.status != "active":
+        return False
+    saved = db.session.get(ClientSession, credential.id)
+    return bool(saved and not is_expired(saved.expires_at)
+                and saved.auth_version == hash_token(credential.owner.password_hash))
 
 
 def password_hash(password):

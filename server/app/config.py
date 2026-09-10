@@ -29,3 +29,5 @@ class Config:
     RESULT_RETENTION_DAYS = int(os.getenv("RESULT_RETENTION_DAYS", "90"))
     TRUST_PROXY = as_bool(os.getenv("TRUST_PROXY"), False)
     ENCRYPTION_KEY = os.getenv("APP_ENCRYPTION_KEY", "")
+    MAX_DEVICES_PER_USER = int(os.getenv("MAX_DEVICES_PER_USER", "5"))
+    CLIENT_SESSION_DAYS = int(os.getenv("CLIENT_SESSION_DAYS", "30"))

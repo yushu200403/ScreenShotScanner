@@ -13,6 +13,7 @@ from werkzeug.serving import make_server
 from app.adapters import stream_profile
 from app.security import encrypt_secret
 from app.development import WebSocketRequestHandler
+from app.versioning import APP_VERSION
 
 
 @pytest.fixture()
@@ -85,32 +86,33 @@ def test_browser_device_upload_and_answer_over_network(app, model_server):
         login = session.post(base + "/api/auth/login", json={"username": "admin", "password": "admin-password"}, timeout=5)
         assert login.status_code == 200
         headers = {"X-CSRF-Token": login.json()["csrf_token"]}
-        token = session.post(base + "/api/credentials", headers=headers, json={"name": "网络测试设备"}, timeout=5).json()["token"]
-        profile = session.post(base + "/api/models", headers=headers, json={"name": "本地测试模型", "provider": "openai_chat",
-                               "endpoint": model_server[0] + "/chat", "api_key": "local-test-key", "models": ["vision"]}, timeout=5).json()["model"]
+        desktop = requests.post(base + "/api/desktop/login", headers={"X-Client-Version": APP_VERSION},
+                                json={"username": "admin", "password": "admin-password", "device_name": "网络测试电脑",
+                                      "device_id": "networkdevice123456789"}, timeout=5).json()
+        token = desktop["session_token"]
+        preset = session.post(base + "/api/presets", headers=headers, json={"name": "本地测试预设", "provider": "openai_chat",
+                               "endpoint": model_server[0] + "/chat", "api_key": "local-test-key", "model_name": "vision",
+                               "prompt": "解释屏幕内容"}, timeout=5).json()["preset"]
+        selected = requests.put(base + "/api/desktop/settings", headers={"X-Client-Version": APP_VERSION, "Authorization": "Bearer " + token},
+                                json={"name": "网络测试电脑", "preset_id": preset["id"]}, timeout=5)
+        assert selected.status_code == 200
         cookie = "; ".join(f"{key}={value}" for key, value in session.cookies.items())
         browser = websocket.create_connection(ws_base + "/ws/browser", origin=base, cookie=cookie, timeout=5)
         assert json.loads(browser.recv())["type"] == "connected"
         device = websocket.create_connection(ws_base + "/ws/device", timeout=5)
         device.send(json.dumps({"type": "hello", "token": token, "device_id": "networkdevice123456789",
-                                "connection_code": "234567890"}))
+                                "connection_code": "234567890", "client_version": APP_VERSION}))
         assert json.loads(device.recv())["type"] == "hello_ack"
-        pair = session.post(base + "/api/devices/pair", headers=headers, json={"connection_code": "234567890"}, timeout=5)
-        approval = json.loads(device.recv())
-        assert approval["type"] == "approval_request"
-        device.send(json.dumps({"type": "approval_response", "pair_request_id": approval["pair_request_id"], "decision": "approve"}))
-        assert json.loads(device.recv())["type"] == "approval_recorded"
         rows = session.get(base + "/api/devices", timeout=5).json()["items"]
-        prompt = session.get(base + "/api/prompts", timeout=5).json()["items"][0]
         created = session.post(base + f"/api/devices/{rows[0]['id']}/requests", headers=headers,
-                               json={"prompt_id": prompt["id"], "model_profile_id": profile["id"], "model_name": "vision"}, timeout=5)
+                               json={"question": "请解释截图"}, timeout=5)
         assert created.status_code == 202
         capture = json.loads(device.recv())
         assert capture["type"] == "capture_request"
         rid = capture["request_id"]
         image = BytesIO()
         Image.new("RGB", (64, 48), "white").save(image, format="JPEG")
-        uploaded = requests.post(base + f"/api/device/requests/{rid}/screenshot", headers={"Authorization": "Bearer " + token},
+        uploaded = requests.post(base + f"/api/device/requests/{rid}/screenshot", headers={"Authorization": "Bearer " + token, "X-Client-Version": APP_VERSION},
                                  files={"image": ("截图.jpg", image.getvalue(), "image/jpeg")}, timeout=5)
         assert uploaded.status_code == 202
         result = None

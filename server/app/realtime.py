@@ -11,7 +11,8 @@ from .lifecycle import serialized, state_lock, revoke_access, stop_requests, exp
 from .models import ClientCredential, Device, DeviceAccess, PairRequest, QuestionRequest, is_expired, utcnow
 from .runtime import (broadcast_user, register_browser, register_device, send_device,
                       unregister_browser, unregister_device, is_current_device)
-from .security import hash_connection_code, hash_token
+from .security import client_session_valid, hash_connection_code, hash_token, new_connection_code
+from .versioning import APP_VERSION
 
 
 sock = Sock()
@@ -49,12 +50,12 @@ def _handle_approval(ws, device, message):
     decision = message.get("decision")
     pair = db.session.get(PairRequest, pair_id)
     if not pair or pair.device_id != device.id or pair.status != "pending":
-        _send(ws, {"type": "error", "code": "pairing_not_found", "message": "连接许可已失效"})
+        _send(ws, {"type": "error", "code": "pairing_not_found", "message": "使用申请已失效，请重新申请"})
         return
     if device.code_invalidated or pair.user.status != "active" or is_expired(pair.expires_at):
         pair.status = "expired"
         db.session.commit()
-        _send(ws, {"type": "error", "code": "pairing_expired", "message": "连接许可已过期"})
+        _send(ws, {"type": "error", "code": "pairing_expired", "message": "使用申请已过期，请重新申请"})
         return
     pair.status = "approved" if decision == "approve" else "rejected"
     pair.decided_at = utcnow()
@@ -80,8 +81,8 @@ def _handle_approval(ws, device, message):
 
 @serialized
 def _handle_device_message(ws, device, message):
-    if device.credential.revoked_at or device.owner.status != "active":
-        _device_error(ws, "客户端凭证或账号已失效")
+    if not client_session_valid(device.credential):
+        _device_error(ws, "登录已过期，请重新登录")
         return
     message_type = message.get("type")
     if message_type == "heartbeat":
@@ -94,14 +95,14 @@ def _handle_device_message(ws, device, message):
     if message_type == "reset_code":
         new_code = str(message.get("connection_code", ""))
         if not re.fullmatch(r"[0-9]{9}", new_code):
-            _send(ws, {"type": "error", "code": "invalid_code", "message": "连接码必须是 9 位数字"})
+            _send(ws, {"type": "error", "code": "invalid_code", "message": "邀请码必须是 9 位数字"})
             return
         collision = Device.query.filter(Device.connection_code_hash == hash_connection_code(new_code),
                                          Device.id != device.id).first()
         if collision:
-            _send(ws, {"type": "error", "code": "code_in_use", "message": "连接码重复，请重新生成"})
+            _send(ws, {"type": "error", "code": "code_in_use", "message": "邀请码重复，请重新生成"})
             return
-        affected_user_ids = revoke_access(device, "客户端已重置连接码")
+        affected_user_ids = revoke_access(device, "客户端已重置邀请码")
         device.connection_code_hash = hash_connection_code(new_code)
         device.connection_code_last4 = new_code[-4:]
         device.code_invalidated = False
@@ -161,81 +162,48 @@ def _request_payload(row):
 
 @serialized
 def _authenticate_device(ws, first):
-    revoked_user_ids = set()
+    if first.get("client_version") != APP_VERSION:
+        _device_error(ws, f"客户端与服务器版本不同，请安装 {APP_VERSION} 版客户端后重试", "version_mismatch")
+        return
     token = str(first.get("token", ""))
     credential = ClientCredential.query.filter_by(token_hash=hash_token(token)).first()
-    if not credential or credential.revoked_at or credential.owner.status != "active":
-        _device_error(ws, "客户端凭证无效或已撤销")
+    if not client_session_valid(credential):
+        _device_error(ws, "登录已过期，请重新登录")
         return
-    device_id = str(first.get("device_id", ""))
-    if not re.fullmatch(r"[a-zA-Z0-9_-]{16,64}", device_id):
-        _device_error(ws, "客户端设备标识无效")
+    device = credential.device
+    if not device or device.device_id != first.get("device_id"):
+        _device_error(ws, "登录信息与这台电脑不匹配，请重新登录")
         return
-    if credential.device_id and credential.device_id != device_id:
-        _device_error(ws, "此凭证已经绑定其他客户端", "credential_bound")
-        return
-    device = Device.query.filter_by(credential_id=credential.id).first()
     code = str(first.get("connection_code", ""))
-    reset_code = bool(first.get("reset_code"))
-    if not re.fullmatch(r"[0-9]{9}", code):
-        _device_error(ws, "连接码必须是 9 位数字", "invalid_code")
-        return
-    if device and device.code_invalidated and not reset_code:
-        _device_error(ws, "连接码已被解绑，请在客户端重置连接码", "code_invalidated")
-        return
-    reset_code = reset_code and (not device or device.connection_code_hash != hash_connection_code(code))
-    if device and reset_code and not device.code_invalidated:
-        previous_code = str(first.get("previous_connection_code", ""))
-        if not re.fullmatch(r"[0-9]{9}", previous_code) or device.connection_code_hash != hash_connection_code(previous_code):
-            _device_error(ws, "重置连接码需要验证原连接码", "code_reset_denied")
-            return
-    if device and device.connection_code_hash and device.connection_code_hash != hash_connection_code(code) and not reset_code:
-        _device_error(ws, "连接码不匹配，请重置连接码", "code_mismatch")
-        return
-    collision = Device.query.filter(Device.connection_code_hash == hash_connection_code(code)).first()
-    if collision and (not device or collision.id != device.id):
-        _device_error(ws, "连接码重复，请重新生成", "code_in_use")
-        return
-    if not device and Device.query.filter_by(device_id=device_id).first():
-        _device_error(ws, "设备标识已被其他凭证使用", "credential_bound")
-        return
-    if not device:
-        credential.device_id = device_id
-        device = Device(credential_id=credential.id, owner_id=credential.owner_id, device_id=device_id,
-                        name=str(first.get("device_name") or "Windows 客户端")[:120],
-                        connection_code_hash=hash_connection_code(code), connection_code_last4=code[-4:])
-        db.session.add(device)
+    if not re.fullmatch(r"[0-9]{9}", code) or device.code_invalidated:
+        code = new_connection_code()
+    while Device.query.filter(Device.connection_code_hash == hash_connection_code(code), Device.id != device.id).first():
+        code = new_connection_code()
+    if device.connection_code_hash and device.connection_code_hash != hash_connection_code(code):
+        affected = revoke_access(device, "这台电脑已更换邀请码")
+        for user_id in affected:
+            broadcast_user(user_id, {"type": "device_update", "device_id": device.id})
     else:
-        device.name = str(first.get("device_name") or device.name)[:120]
-        if reset_code:
-            revoked_user_ids = revoke_access(device, "客户端已重置连接码")
-        else:
-            stop_requests(device, "客户端已重新连接，请重试", CAPTURE_STATUSES)
-            expire_pairings(device)
-        device.connection_code_hash = hash_connection_code(code)
-        device.connection_code_last4 = code[-4:]
-        device.code_invalidated = False
+        stop_requests(device, "这台电脑已重新连接，请重试", CAPTURE_STATUSES)
+        expire_pairings(device)
+    device.connection_code_hash, device.connection_code_last4 = hash_connection_code(code), code[-4:]
+    device.code_invalidated = False
     device.online = True
-    device.client_version = str(first.get("client_version") or "")[:40]
+    device.client_version = APP_VERSION
     device.platform = str(first.get("platform") or "")[:80]
-    device.connected_at = utcnow()
-    device.last_seen_at = utcnow()
-    credential.last_used_at = utcnow()
+    device.connected_at = device.last_seen_at = credential.last_used_at = utcnow()
     db.session.commit()
     previous_socket = register_device(device.device_id, ws)
     if previous_socket and previous_socket is not ws:
         try:
-            previous_socket.send(json.dumps({"type": "server_disconnect", "reason": "客户端已在其他连接上线"}, ensure_ascii=False))
+            previous_socket.send(json.dumps({"type": "server_disconnect", "reason": "这台电脑已重新连接"}, ensure_ascii=False))
             previous_socket.close()
         except Exception:
             pass
-    _send(ws, {"type": "hello_ack", "device_id": device.device_id,
+    _send(ws, {"type": "hello_ack", "device_id": device.device_id, "server_version": APP_VERSION,
                "connection_code_last4": device.connection_code_last4, "connection_code": code})
     _broadcast_device(device, {"type": "device_update", "device_id": device.id,
                                "online": True, "name": device.name})
-    for revoked_user_id in revoked_user_ids - {device.owner_id}:
-        broadcast_user(revoked_user_id, {"type": "device_update", "device_id": device.id,
-                                         "online": True, "code_invalidated": False})
     return device
 
 
@@ -245,7 +213,7 @@ def device_socket(ws):
     try:
         first = _parse(ws.receive(timeout=10))
         if not first or first.get("type") != "hello":
-            _device_error(ws, "连接握手无效")
+            _device_error(ws, "无法连接，请重新登录")
             return
         device = _authenticate_device(ws, first)
         if device is None:

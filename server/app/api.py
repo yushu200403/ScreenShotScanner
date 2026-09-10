@@ -1,26 +1,25 @@
-import json
 import os
 import re
+from uuid import uuid4
 from io import BytesIO
 from datetime import timedelta
-from functools import wraps
-from uuid import uuid4
 
 from flask import Blueprint, current_app, jsonify, request, send_file
 from sqlalchemy import or_
 from PIL import Image, UnidentifiedImageError
 
-from .adapters import model_names
 from .extensions import db
 from .lifecycle import disconnect, revoke_access, serialized, stop_requests, ACTIVE_STATUSES
-from .models import (AuditLog, ClientCredential, Device, DeviceAccess, ModelProfile,
-                     PairRequest, PromptTemplate, QuestionRequest, User, is_expired, utcnow, as_utc)
+from .models import (AuditLog, ClientCredential, Device, DeviceAccess,
+                     PairRequest, QuestionRequest, RequestPreset,
+                     RemovedDevice, User, is_expired, utcnow, as_utc)
+from .presets import available, selected_preset, summary
 from .runtime import (add_cancel_event, broadcast_user, get_cancel_event, send_device,
                       submit_request, close_browsers)
-from .security import (admin_required, audit, csrf_required, csrf_token, decrypt_secret,
-                       encrypt_secret, error, establish_session, hash_connection_code,
-                       hash_token, is_locked, json_body, login_required, new_connection_code,
-                       new_credential_token, password_hash, rate_limited, record_login_failure,
+from .security import (admin_required, audit, client_session_valid, csrf_required, csrf_token,
+                       error, establish_session, hash_connection_code,
+                       hash_token, is_locked, json_body, login_required,
+                       password_hash, rate_limited, record_login_failure,
                        record_login_success, user_from_session, valid_password)
 
 
@@ -31,53 +30,28 @@ def _iso(value):
     return as_utc(value).isoformat() if value else None
 
 
-def _parse_list(value, fallback=None):
-    try:
-        parsed = json.loads(value) if isinstance(value, str) else value
-        if isinstance(parsed, list):
-            return [str(item).strip() for item in parsed if str(item).strip()]
-    except (TypeError, ValueError, json.JSONDecodeError):
-        pass
-    return fallback or []
-
-
-def _parse_options(value):
-    if value in (None, ""):
-        return {}
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str):
-        parsed = json.loads(value)
-        if isinstance(parsed, dict):
-            return parsed
-    raise ValueError("高级参数必须是 JSON 对象")
-
-
 def _safe_name(value, fallback):
     value = str(value or "").strip()
     return value[:120] or fallback
 
 
-def _profile_visible(profile, user):
-    return profile.is_global or profile.owner_id == user.id
-
-
-def _prompt_visible(prompt, user):
-    return prompt.is_global or prompt.owner_id == user.id
-
-
 def _device_accessible(device, user):
-    if user.role == "admin":
+    if db.session.get(RemovedDevice, device.id):
+        return False
+    if user.role == "admin" or device.owner_id == user.id:
         return True
     return DeviceAccess.query.filter_by(device_id=device.id, user_id=user.id, revoked_at=None).first() is not None
 
 
 def _device_json(device, user=None):
+    preset = selected_preset(device)
     return {
         "id": device.id,
         "device_id": device.device_id,
         "credential_id": device.credential_id,
         "name": device.name,
+        "preset": summary(preset) if preset else None,
+        "preset_available": available(preset, device.owner),
         "online": device.online,
         "owner_id": device.owner_id,
         "owner_name": device.owner.display_name if device.owner else "",
@@ -96,8 +70,10 @@ def _device_json(device, user=None):
 
 
 def _request_json(row):
+    preset = db.session.get(RequestPreset, row.id)
     return {
         "id": row.id,
+        "preset_name": preset.name if preset else "",
         "device_id": row.device_id,
         "device_name": row.device.name if row.device else "",
         "user_id": row.user_id,
@@ -116,51 +92,7 @@ def _request_json(row):
     }
 
 
-def _profile_json(profile):
-    return {
-        "id": profile.id,
-        "name": profile.name,
-        "provider": profile.provider,
-        "endpoint": profile.endpoint,
-        "models": _parse_list(profile.models_json),
-        "timeout_seconds": profile.timeout_seconds,
-        "options": json.loads(profile.options_json or "{}"),
-        "is_global": profile.is_global,
-        "enabled": profile.enabled,
-        "owner_id": profile.owner_id,
-        "api_key_configured": bool(profile.api_key_ciphertext),
-        "api_key_last4": decrypt_secret(profile.api_key_ciphertext)[-4:] if profile.api_key_ciphertext else "",
-        "created_at": _iso(profile.created_at),
-        "updated_at": _iso(profile.updated_at),
-    }
-
-
-def _prompt_json(prompt):
-    return {
-        "id": prompt.id,
-        "name": prompt.name,
-        "description": prompt.description or "",
-        "content": prompt.content,
-        "is_global": prompt.is_global,
-        "owner_id": prompt.owner_id,
-        "created_at": _iso(prompt.created_at),
-        "updated_at": _iso(prompt.updated_at),
-    }
-
-
-def _credential_json(credential):
-    return {
-        "id": credential.id,
-        "name": credential.name,
-        "token_last4": credential.token_last4,
-        "device_id": credential.device_id,
-        "revoked": bool(credential.revoked_at),
-        "created_at": _iso(credential.created_at),
-        "last_used_at": _iso(credential.last_used_at),
-    }
-
-
-def _cancel_row(row, reason="网页强制中断", commit=True):
+def _cancel_row(row, reason="已停止回答", commit=True):
     row.cancel_requested = True
     row.status = "cancelled"
     row.error = reason
@@ -201,9 +133,17 @@ def register():
 
 @api_bp.post("/auth/login")
 def login():
+    user, denied = authenticate_account(json_body())
+    if denied:
+        return denied
+    establish_session(user)
+    return jsonify({"user": {"id": user.id, "username": user.username, "display_name": user.display_name,
+                              "role": user.role}, "csrf_token": csrf_token()})
+
+
+def authenticate_account(payload):
     if rate_limited("login_ip", request.remote_addr or "unknown", 30, 300):
-        return error("登录请求过于频繁，请稍后再试", 429, "rate_limited")
-    payload = json_body()
+        return None, error("登录请求过于频繁，请稍后再试", 429, "rate_limited")
     username = str(payload.get("username", "")).strip().lower()
     password = str(payload.get("password", ""))
     user = User.query.filter_by(username=username).first()
@@ -211,18 +151,16 @@ def login():
         if user:
             record_login_failure(user)
             audit(user.id, "auth.login_failed", "user", user.id)
-        return error("用户名或密码错误", 401, "invalid_credentials")
+        return None, error("用户名或密码错误", 401, "invalid_credentials")
     if user.status == "pending":
-        return error("账号正在等待管理员审批", 403, "account_pending")
+        return None, error("账号正在等待管理员审批", 403, "account_pending")
     if user.status != "active":
-        return error("账号不可用", 403, "account_disabled")
+        return None, error("账号不可用", 403, "account_disabled")
     if is_locked(user):
-        return error("登录失败次数过多，请稍后再试", 423, "account_locked")
-    establish_session(user)
+        return None, error("登录失败次数过多，请稍后再试", 423, "account_locked")
     record_login_success(user)
     audit(user.id, "auth.login", "user", user.id)
-    return jsonify({"user": {"id": user.id, "username": user.username, "display_name": user.display_name,
-                              "role": user.role}, "csrf_token": csrf_token()})
+    return user, None
 
 
 @api_bp.post("/auth/logout")
@@ -268,234 +206,40 @@ def change_password(user):
     return jsonify({"status": "ok", "csrf_token": csrf_token()})
 
 
-@api_bp.get("/credentials")
-@login_required
-def credentials(user):
-    rows = ClientCredential.query.filter_by(owner_id=user.id).order_by(ClientCredential.created_at.desc()).all()
-    return jsonify({"items": [_credential_json(row) for row in rows]})
-
-
-@api_bp.post("/credentials")
-@login_required
-def create_credential(user):
-    denied = csrf_required()
-    if denied:
-        return denied
-    payload = json_body()
-    token = new_credential_token()
-    row = ClientCredential(owner_id=user.id, name=_safe_name(payload.get("name"), "Windows 客户端"),
-                           token_hash=hash_token(token), token_last4=token[-4:])
-    db.session.add(row)
-    db.session.commit()
-    audit(user.id, "credential.created", "credential", row.id)
-    return jsonify({"credential": _credential_json(row), "token": token}), 201
-
-
-@api_bp.delete("/credentials/<int:credential_id>")
-@serialized
-@login_required
-def revoke_credential(user, credential_id):
-    denied = csrf_required()
-    if denied:
-        return denied
-    row = db.session.get(ClientCredential, credential_id)
-    if not row or row.owner_id != user.id:
-        return error("凭证不存在", 404, "not_found")
-    row.revoked_at = utcnow()
-    db.session.commit()
-    if row.device:
-        disconnect(row.device, "客户端凭证已撤销")
-    audit(user.id, "credential.revoked", "credential", row.id)
-    return jsonify({"status": "ok"})
-
-
-@api_bp.get("/prompts")
-@login_required
-def prompts(user):
-    rows = PromptTemplate.query.filter(or_(PromptTemplate.is_global.is_(True), PromptTemplate.owner_id == user.id)).order_by(PromptTemplate.updated_at.desc()).all()
-    return jsonify({"items": [_prompt_json(row) for row in rows]})
-
-
-@api_bp.post("/prompts")
-@login_required
-def create_prompt(user):
-    denied = csrf_required()
-    if denied:
-        return denied
-    payload = json_body()
-    content = str(payload.get("content", "")).strip()
-    if not content or len(content) > 20000:
-        return error("提示词不能为空且不能超过 20000 字")
-    is_global = user.role == "admin" and bool(payload.get("is_global", True))
-    row = PromptTemplate(owner_id=user.id, name=_safe_name(payload.get("name"), "未命名提示词"),
-                         description=str(payload.get("description", ""))[:255], content=content,
-                         is_global=is_global)
-    db.session.add(row)
-    db.session.commit()
-    audit(user.id, "prompt.created", "prompt", row.id)
-    return jsonify({"prompt": _prompt_json(row)}), 201
-
-
-@api_bp.put("/prompts/<int:prompt_id>")
-@login_required
-def update_prompt(user, prompt_id):
-    denied = csrf_required()
-    if denied:
-        return denied
-    row = db.session.get(PromptTemplate, prompt_id)
-    if not row or (row.owner_id != user.id and not (row.is_global and user.role == "admin")):
-        return error("提示词不存在或无权修改", 404, "not_found")
-    payload = json_body()
-    if "content" in payload:
-        content = str(payload.get("content", "")).strip()
-        if not content or len(content) > 20000:
-            return error("提示词不能为空且不能超过 20000 字")
-        row.content = content
-    if "name" in payload:
-        row.name = _safe_name(payload.get("name"), row.name)
-    if "description" in payload:
-        row.description = str(payload.get("description", ""))[:255]
-    db.session.commit()
-    audit(user.id, "prompt.updated", "prompt", row.id)
-    return jsonify({"prompt": _prompt_json(row)})
-
-
-@api_bp.delete("/prompts/<int:prompt_id>")
-@login_required
-def delete_prompt(user, prompt_id):
-    denied = csrf_required()
-    if denied:
-        return denied
-    row = db.session.get(PromptTemplate, prompt_id)
-    if not row or (row.owner_id != user.id and not (row.is_global and user.role == "admin")):
-        return error("提示词不存在或无权删除", 404, "not_found")
-    if QuestionRequest.query.filter_by(prompt_id=row.id).first():
-        return error("该提示词已被历史请求使用，不能删除")
-    db.session.delete(row)
-    db.session.commit()
-    audit(user.id, "prompt.deleted", "prompt", row.id)
-    return jsonify({"status": "ok"})
-
-
-@api_bp.get("/models")
-@login_required
-def models(user):
-    rows = ModelProfile.query.filter(or_(ModelProfile.is_global.is_(True), ModelProfile.owner_id == user.id)).order_by(ModelProfile.updated_at.desc()).all()
-    return jsonify({"items": [_profile_json(row) for row in rows]})
-
-
-@api_bp.post("/models")
-@login_required
-def create_model(user):
-    denied = csrf_required()
-    if denied:
-        return denied
-    payload = json_body()
-    provider = str(payload.get("provider", "")).strip()
-    if provider not in {"deepseek", "openai_chat", "openai_responses", "gemini"}:
-        return error("模型协议必须是 deepseek、openai_chat、openai_responses 或 gemini")
-    endpoint = str(payload.get("endpoint", "")).strip()
-    api_key = str(payload.get("api_key", ""))
-    model_list = _parse_list(payload.get("models"))
-    if not endpoint or not api_key or not model_list:
-        return error("API 端点、API Key 和至少一个模型名称均为必填")
-    if len(endpoint) > 1000 or len(api_key) > 10000:
-        return error("API 端点或 API Key 过长")
-    if len(model_list) > 100 or any(len(name) > 160 for name in model_list):
-        return error("模型名称最多 100 个，每个不能超过 160 字符")
-    if not endpoint.startswith(("https://", "http://")):
-        return error("API 端点必须使用 HTTP 或 HTTPS")
-    try:
-        options = _parse_options(payload.get("options"))
-    except ValueError as exc:
-        return error(str(exc))
-    try:
-        timeout_seconds = max(10, min(int(payload.get("timeout_seconds", 120)), 600))
-    except (TypeError, ValueError):
-        return error("超时时间必须是 10 到 600 秒的整数")
-    is_global = user.role == "admin" and bool(payload.get("is_global", True))
-    row = ModelProfile(owner_id=user.id, name=_safe_name(payload.get("name"), "未命名模型配置"),
-                       provider=provider, endpoint=endpoint, api_key_ciphertext=encrypt_secret(api_key),
-                       models_json=json.dumps(model_list, ensure_ascii=False),
-                       timeout_seconds=timeout_seconds,
-                       options_json=json.dumps(options, ensure_ascii=False), is_global=is_global)
-    db.session.add(row)
-    db.session.commit()
-    audit(user.id, "model.created", "model", row.id, {"provider": provider, "endpoint": endpoint})
-    return jsonify({"model": _profile_json(row)}), 201
-
-
-@api_bp.put("/models/<int:model_id>")
-@login_required
-def update_model(user, model_id):
-    denied = csrf_required()
-    if denied:
-        return denied
-    row = db.session.get(ModelProfile, model_id)
-    if not row or (row.owner_id != user.id and not (row.is_global and user.role == "admin")):
-        return error("模型配置不存在或无权修改", 404, "not_found")
-    payload = json_body()
-    if "name" in payload:
-        row.name = _safe_name(payload.get("name"), row.name)
-    if "endpoint" in payload:
-        endpoint = str(payload.get("endpoint", "")).strip()
-        if not endpoint.startswith(("https://", "http://")):
-            return error("API 端点必须使用 HTTP 或 HTTPS")
-        if len(endpoint) > 1000:
-            return error("API 端点过长")
-        row.endpoint = endpoint
-    if "api_key" in payload and str(payload.get("api_key", "")):
-        if len(str(payload.get("api_key"))) > 10000:
-            return error("API Key 过长")
-        row.api_key_ciphertext = encrypt_secret(str(payload.get("api_key")))
-    if "models" in payload:
-        model_list = _parse_list(payload.get("models"))
-        if not model_list:
-            return error("至少需要一个模型名称")
-        if len(model_list) > 100 or any(len(name) > 160 for name in model_list):
-            return error("模型名称最多 100 个，每个不能超过 160 字符")
-        row.models_json = json.dumps(model_list, ensure_ascii=False)
-    if "timeout_seconds" in payload:
-        try:
-            row.timeout_seconds = max(10, min(int(payload.get("timeout_seconds", 120)), 600))
-        except (TypeError, ValueError):
-            return error("超时时间必须是 10 到 600 秒的整数")
-    if "options" in payload:
-        try:
-            row.options_json = json.dumps(_parse_options(payload.get("options")), ensure_ascii=False)
-        except ValueError as exc:
-            return error(str(exc))
-    if "enabled" in payload:
-        row.enabled = bool(payload.get("enabled"))
-    db.session.commit()
-    audit(user.id, "model.updated", "model", row.id)
-    return jsonify({"model": _profile_json(row)})
-
-
-@api_bp.delete("/models/<int:model_id>")
-@login_required
-def disable_model(user, model_id):
-    denied = csrf_required()
-    if denied:
-        return denied
-    row = db.session.get(ModelProfile, model_id)
-    if not row or (row.owner_id != user.id and not (row.is_global and user.role == "admin")):
-        return error("模型配置不存在或无权修改", 404, "not_found")
-    row.enabled = False
-    db.session.commit()
-    audit(user.id, "model.disabled", "model", row.id)
-    return jsonify({"status": "ok"})
-
-
 @api_bp.get("/devices")
 @login_required
 def devices(user):
+    saved = ~Device.id.in_(db.session.query(RemovedDevice.device_id))
     if user.role == "admin":
-        rows = Device.query.order_by(Device.last_seen_at.desc().nullslast(), Device.created_at.desc()).all()
+        rows = Device.query.filter(saved).order_by(Device.last_seen_at.desc().nullslast(), Device.created_at.desc()).all()
     else:
-        rows = Device.query.join(DeviceAccess, DeviceAccess.device_id == Device.id).filter(
-            DeviceAccess.user_id == user.id, DeviceAccess.revoked_at.is_(None)).order_by(Device.created_at.desc()).all()
-    return jsonify({"items": [_device_json(row, user) for row in rows]})
+        granted = db.session.query(DeviceAccess.device_id).filter(
+            DeviceAccess.user_id == user.id, DeviceAccess.revoked_at.is_(None))
+        rows = Device.query.filter(saved, or_(Device.owner_id == user.id, Device.id.in_(granted))).order_by(Device.created_at.desc()).all()
+    return jsonify({"items": [_device_json(row, user) for row in rows], "limit": current_app.config["MAX_DEVICES_PER_USER"]})
+
+
+@api_bp.delete("/devices/<int:device_id>")
+@serialized
+@login_required
+def delete_device(user, device_id):
+    denied = csrf_required()
+    if denied:
+        return denied
+    device = db.session.get(Device, device_id)
+    if not device or (device.owner_id != user.id and user.role != "admin") or db.session.get(RemovedDevice, device_id):
+        return error("这台电脑不存在或无法删除", 404, "not_found")
+    affected = revoke_access(device, "这台电脑已被删除")
+    device.credential.revoked_at = utcnow()
+    device.connection_code_hash = None
+    device.connection_code_last4 = None
+    device.code_invalidated = True
+    db.session.add(RemovedDevice(device_id=device.id))
+    db.session.commit()
+    disconnect(device, "这台电脑已被删除，请重新登录")
+    for user_id in affected:
+        broadcast_user(user_id, {"type": "device_update", "device_id": device.id})
+    return jsonify(status="ok")
 
 
 @api_bp.post("/devices/pair")
@@ -506,13 +250,13 @@ def pair_device(user):
     if denied:
         return denied
     if rate_limited("pair_user", user.id, 20, 60):
-        return error("连接码尝试过于频繁，请稍后再试", 429, "rate_limited")
+        return error("邀请码尝试过于频繁，请稍后再试", 429, "rate_limited")
     code = str(json_body().get("connection_code", "")).strip()
     if not re.fullmatch(r"[0-9]{9}", code):
-        return error("连接码必须是 9 位数字")
+        return error("邀请码必须是 9 位数字")
     device = Device.query.filter_by(connection_code_hash=hash_connection_code(code), code_invalidated=False).first()
     if not device:
-        return error("连接码无效或设备尚未连接", 404, "pair_not_found")
+        return error("邀请码无效或设备尚未连接", 404, "pair_not_found")
     if not device.online:
         return error("设备当前不在线", 409, "device_offline")
     existing = DeviceAccess.query.filter_by(device_id=device.id, user_id=user.id, revoked_at=None).first()
@@ -558,12 +302,24 @@ def unpair_device(user, device_id):
     device = db.session.get(Device, device_id)
     if not device or not _device_accessible(device, user):
         return error("设备不存在或无权操作", 404, "not_found")
-    affected_user_ids = revoke_access(device, "网页已解绑连接码")
+    if user.id != device.owner_id and user.role != "admin":
+        grant = DeviceAccess.query.filter_by(device_id=device.id, user_id=user.id, revoked_at=None).first()
+        if grant:
+            grant.revoked_at = utcnow()
+            db.session.commit()
+        stop_requests_for_user = QuestionRequest.query.filter(
+            QuestionRequest.device_id == device.id, QuestionRequest.user_id == user.id,
+            QuestionRequest.status.in_(ACTIVE_STATUSES)).all()
+        for row in stop_requests_for_user:
+            _cancel_row(row, "已移除这台电脑")
+        broadcast_user(user.id, {"type": "device_update", "device_id": device.id})
+        return jsonify(status="ok")
+    affected_user_ids = revoke_access(device, "已取消其他账号的使用权限")
     device.connection_code_hash = None
     device.connection_code_last4 = None
     device.code_invalidated = True
     db.session.commit()
-    send_device(device.device_id, {"type": "code_invalidated", "reason": "网页已解绑连接码"})
+    send_device(device.device_id, {"type": "code_invalidated", "reason": "已取消其他账号的使用权限"})
     affected_user_ids.add(device.owner_id)
     for affected_user_id in affected_user_ids:
         broadcast_user(affected_user_id, {"type": "device_update", "device_id": device.id,
@@ -597,48 +353,37 @@ def create_request(user, device_id):
     device = Device.query.filter_by(id=device_id).with_for_update().first()
     if not device or not _device_accessible(device, user):
         return error("设备不存在或无权操作", 404, "not_found")
-    if device.code_invalidated:
-        return error("连接码已失效，请在客户端重置", 409, "code_invalidated")
-    if not device.online or device.credential.revoked_at or device.owner.status != "active":
-        return error("客户端不在线或凭证不可用", 409, "device_offline")
+    if not device.online or not client_session_valid(device.credential):
+        return error("这台电脑尚未连接，请在客户端登录后重试", 409, "device_offline")
     payload = json_body()
-    try:
-        prompt_id = int(payload.get("prompt_id", 0))
-        profile_id = int(payload.get("model_profile_id", 0))
-    except (TypeError, ValueError):
-        return error("请选择有效的提示词和模型配置")
-    if prompt_id <= 0 or profile_id <= 0:
-        return error("请选择有效的提示词和模型配置")
+    preset = selected_preset(device)
+    if not available(preset, device.owner):
+        return error("请先在这台电脑的客户端选择可用的预设", 409, "preset_required")
     if "force" in payload and not isinstance(payload["force"], bool):
-        return error("强制中断参数必须为布尔值")
-    prompt = db.session.get(PromptTemplate, prompt_id)
-    profile = db.session.get(ModelProfile, profile_id)
-    if not prompt or not _prompt_visible(prompt, user):
-        return error("提示词不存在或无权使用")
-    if not profile or not profile.enabled or not _profile_visible(profile, user):
-        return error("模型配置不存在、已禁用或无权使用")
-    names = model_names(profile)
-    model_name = str(payload.get("model_name") or (names[0] if names else "")).strip()
-    if not model_name or model_name not in names:
-        return error("请选择该模型配置中的模型名称")
-    reasoning_effort = str(payload.get("reasoning_effort") or device.reasoning_effort or "medium")
-    if reasoning_effort not in {"none", "low", "medium", "high", "xhigh"}:
-        return error("推理强度必须是 none、low、medium、high 或 xhigh")
+        return error("请选择是否停止上一条回答")
+    question = payload.get("question", "")
+    if not isinstance(question, str) or len(question) > 5000:
+        return error("补充问题最多 5000 字")
+    prompt, profile = preset.prompt, preset.profile
+    model_name, reasoning_effort = preset.model_name, preset.reasoning_effort
     active = QuestionRequest.query.filter(QuestionRequest.device_id == device.id,
                                           QuestionRequest.status.in_(["waiting_capture", "capturing", "uploading", "processing"])).order_by(QuestionRequest.created_at.desc()).first()
     if active:
         if not bool(payload.get("force")):
-            return error("该设备已有请求执行中", 409, "device_busy")
+            return error("这台电脑正在回答，请等待完成，或选择停止上一条后重新提问", 409, "device_busy")
         _cancel_row(active, commit=False)
     row = QuestionRequest(device_id=device.id, user_id=user.id, prompt_id=prompt.id,
                           model_profile_id=profile.id, model_name=model_name,
                           reasoning_effort=reasoning_effort,
-                          question=str(payload.get("question", ""))[:5000], status="waiting_capture")
+                          question=question, status="waiting_capture")
     device.default_prompt_id = prompt.id
     device.default_model_profile_id = profile.id
     device.default_model_name = model_name
     device.reasoning_effort = reasoning_effort
     db.session.add(row)
+    db.session.flush()
+    if preset:
+        db.session.add(RequestPreset(request_id=row.id, preset_id=preset.id, name=preset.name))
     db.session.commit()
     if active:
         broadcast_user(active.user_id, {"type": "request_update", "request": _request_json(active)})
@@ -677,9 +422,8 @@ def upload_screenshot(request_id):
     auth = request.headers.get("Authorization", "")
     token = auth[7:].strip() if auth.startswith("Bearer ") else ""
     credential = ClientCredential.query.filter_by(token_hash=hash_token(token)).first()
-    if (not credential or credential.revoked_at or not credential.device
-            or credential.owner.status != "active"):
-        return error("客户端凭证无效", 401, "device_auth_failed")
+    if not client_session_valid(credential) or not credential.device:
+        return error("登录已过期，请在客户端重新登录", 401, "device_auth_failed")
     row = db.session.get(QuestionRequest, request_id)
     if not row or row.device.credential_id != credential.id:
         return error("请求不存在", 404, "not_found")

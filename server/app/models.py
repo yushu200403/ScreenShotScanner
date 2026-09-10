@@ -164,3 +164,54 @@ class AuditLog(db.Model):
     detail = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
     user = db.relationship("User")
+
+
+class Preset(db.Model):
+    __tablename__ = "presets"
+    id = db.Column(db.Integer, primary_key=True)
+    owner_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    description = db.Column(db.String(500), nullable=False, default="")
+    is_global = db.Column(db.Boolean, nullable=False, default=False)
+    enabled = db.Column(db.Boolean, nullable=False, default=True)
+    prompt_id = db.Column(db.Integer, db.ForeignKey("prompt_templates.id"), nullable=False)
+    model_profile_id = db.Column(db.Integer, db.ForeignKey("model_profiles.id"), nullable=False)
+    model_name = db.Column(db.String(160), nullable=False)
+    reasoning_effort = db.Column(db.String(20), nullable=False, default="none")
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+    prompt = db.relationship("PromptTemplate")
+    profile = db.relationship("ModelProfile")
+
+
+class DevicePreference(db.Model):
+    __tablename__ = "device_preferences"
+    device_id = db.Column(db.Integer, db.ForeignKey("devices.id"), primary_key=True)
+    preset_id = db.Column(db.Integer, db.ForeignKey("presets.id"), nullable=True)
+    preset = db.relationship("Preset")
+
+
+class ClientSession(db.Model):
+    __tablename__ = "client_sessions"
+    credential_id = db.Column(db.Integer, db.ForeignKey("client_credentials.id"), primary_key=True)
+    auth_version = db.Column(db.String(64), nullable=False)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+
+
+class RequestPreset(db.Model):
+    __tablename__ = "request_presets"
+    request_id = db.Column(db.String(36), db.ForeignKey("question_requests.id"), primary_key=True)
+    preset_id = db.Column(db.Integer, db.ForeignKey("presets.id"), nullable=False)
+    name = db.Column(db.String(120), nullable=False)
+
+
+class DatabaseVersion(db.Model):
+    __tablename__ = "database_version"
+    id = db.Column(db.Integer, primary_key=True)
+    version = db.Column(db.Integer, nullable=False)
+
+
+class RemovedDevice(db.Model):
+    __tablename__ = "removed_devices"
+    device_id = db.Column(db.Integer, db.ForeignKey("devices.id"), primary_key=True)
+    removed_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
