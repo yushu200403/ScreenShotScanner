@@ -8,7 +8,7 @@ ScreenShotScanner 让 Windows 电脑负责截图，在网页上提问和查看�
 - 客户端保存登录状态，下次启动自动恢复；不保存密码，也不需要复制任何登录信息。
 - 在客户端设置电脑名称、选择预设并保存，网页立即显示该名称和预设。
 - 名称可以相同，所有操作始终按独立设备 ID 区分；网页会为同名电脑显示编号。
-- 管理员提供公共预设，用户也可以创建自己的预设。每个预设完整保存回答要求、模型类型、模型名称、服务地址、服务密钥和附加设置。
+- 管理员提供公共预设，用户也可以创建自己的预设。每个预设完整保存提示词、请求格式、模型名称、模型端点、API 密钥和高级参数。
 - 网页只需选择电脑、填写可选的补充问题，然后点击“截图并提问”。
 - 每个账号默认最多保存 5 台电脑；达到上限后，需要在网页删除不再使用的电脑才能新增。
 - 删除电脑会立即撤销登录状态、取消任务和共享访问，并释放名额；历史回答仍保留。暂时断开或退出客户端不释放名额。
@@ -36,7 +36,9 @@ ScreenShotScanner 让 Windows 电脑负责截图，在网页上提问和查看�
 
 DeepSeek Chat Completions 的 reasoning_content、OpenAI Responses 的 reasoning summary 事件和 Gemini 标记为 thought 的 part 会作为“推理过程”单独保存和显示。
 
-推理强度支持 none、low、medium、high 和 xhigh。系统将其映射为 Chat Completions 的 reasoning_effort、OpenAI Responses 的 reasoning.effort，以及 Gemini 的 thinkingBudget。none 在 Chat Completions / Responses 中表示不发送推理强度参数、使用模型默认行为，在 Gemini 中表示 thinkingBudget=0；它不能保证所有模型都关闭推理。供应商或模型不支持某个强度时，接口可能拒绝该参数，应在对应模型配置中选择兼容值。
+推理强度支持 none、low、medium、high 和 xhigh。系统将其映射为 Chat Completions 的 reasoning_effort、OpenAI Responses 的 reasoning.effort，以及 Gemini 的 thinkingBudget。none 在 Chat Completions / Responses 中表示不发送推理强度参数、使用模型默认行为，在 Gemini 中表示 thinkingBudget=0；它不能保证所有模型都关闭推理。供应商或模型不支持某个强度时，接口可能拒绝该参数，应在预设的模型配置中选择兼容值。
+
+预设中的“请求格式”决定协议适配器；“模型端点”需填写完整 API URL，而非仅填写服务域名；“模型名称”填写供应商提供的模型 ID。高级参数保留标准名称：采样温度 `temperature`、请求超时（秒）、推理强度和输出 Token 上限。输出上限在 Chat Completions / DeepSeek 中对应 `max_tokens`，在 Responses / Gemini 预设中对应 `max_output_tokens`，Gemini 请求由适配器转换为 `maxOutputTokens`。
 
 各协议只发送对应的高级参数。模型返回错误、输出达到上限或流意外中断时，请求会标记为失败，保留已经收到的内容供排查。只有推理内容而没有最终回答也会明确报错。协议适配不代表任意模型支持图片输入，必须选择供应商实际支持视觉输入的模型。
 
@@ -97,7 +99,7 @@ INITIAL_ADMIN_DISPLAY_NAME
 
 ## 使用流程
 
-1. 管理员登录网页，进入“预设”，创建完整预设，并勾选“提供给所有人使用”。
+1. 管理员登录网页，进入“预设”，创建完整预设，并勾选“公共预设”。
 2. 用户注册账号，等待管理员批准。
 3. 打开 Windows 客户端，填写服务器地址、账号、密码和电脑名称，点击“登录”。
 4. 选择一个预设，点击“保存设置”。如果没有合适的预设，可以在网页创建自己的预设，再回客户端点击“刷新预设”。
@@ -183,6 +185,6 @@ $env:SESSION_COOKIE_SECURE = "false"
 - OpenResty 必须终止 TLS，并正确转发 Upgrade、Connection 和 X-Forwarded-Proto。
 - 登录连续失败默认达到 5 次后锁定 15 分钟；Redis 同时限制登录和邀请码尝试频率。Redis 不可用时相关操作返回 503，不会绕过限流。
 - 修改或重置密码会使旧会话失效；本人修改密码后当前网页登录保持有效。浏览器实时连接校验来源，并在账号状态或权限变化时断开。
-- 客户端登录信息和服务密钥不应写入日志、工单或聊天记录。
+- 客户端登录凭证和模型 API 密钥不应写入日志、工单或聊天记录。
 - 当前版本允许配置任意 HTTP/HTTPS 模型端点。向不受信任用户开放自建模型配置前，应增加 SSRF 私网地址阻断策略。
 - 当前 WebSocket 连接注册表位于单个 Web 进程内，因此 Gunicorn 固定为一个进程和多线程。横向扩容前需要把连接路由迁移到 Redis Pub/Sub 或专用 WebSocket 网关。

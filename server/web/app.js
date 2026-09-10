@@ -55,7 +55,7 @@ async function navigate(page) {
   saveDeviceDraft();
   state.page=page;
   document.querySelectorAll("[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
-  const title={dashboard:"我的电脑",history:"问答历史",presets:"预设",users:"账号管理",audit:"操作记录"}[page]||"我的电脑";
+  const title={dashboard:"我的电脑",history:"问答历史",presets:"预设",users:"账号管理",audit:"审计日志"}[page]||"我的电脑";
   $("#page-eyebrow").textContent="屏幕问答";
   $("#page-title").textContent=title;
   try { await renderCurrent(); } catch(err) { notify(err.message,true); }
@@ -73,7 +73,7 @@ function requestResult(row) {
   const placeholder=["failed","cancelled"].includes(row.status)?"没有生成回答":row.status==="processing"?"正在整理回答...":"等待截图和回答...";
   return `<div class="answer-panel"><div class="panel-title"><div><h4>回答</h4><p>${date(row.created_at)}${row.preset_name?" · "+esc(row.preset_name):""}</p></div>${statusLabel(row.status)}</div>
     ${row.error?`<div class="request-status failed">${esc(row.error)}</div>`:""}
-    ${row.reasoning?`<details class="reasoning-box"><summary>查看思考过程</summary><div class="prose">${esc(row.reasoning)}</div></details>`:""}
+    ${row.reasoning?`<details class="reasoning-box"><summary>查看推理过程</summary><div class="prose">${esc(row.reasoning)}</div></details>`:""}
     <div class="prose answer-prose">${esc(row.answer||placeholder)}</div>
     ${row.screenshot_available?`<div class="toolbar" style="margin-top:14px"><a class="secondary-button" href="${esc(row.screenshot_url)}" target="_blank" rel="noreferrer">查看截图</a></div>`:""}</div>`;
 }
@@ -145,7 +145,7 @@ async function renderPresets() {
   $("#new-preset").addEventListener("click",()=>presetModal());
   const result=await api("/api/presets");if(state.page!=="presets")return;state.presets=result.items;
   const list=$("#preset-list");
-  list.innerHTML=state.presets.length?state.presets.map(p=>`<article class="preset-card"><div><h3>${esc(p.name)} <span class="role-label">${p.is_global?"公共预设":"我的预设"}</span></h3><p class="muted">${esc(p.description||"已保存完整的回答设置")}</p>${!p.enabled?'<p class="form-message error">已停用，无法用于新提问</p>':""}</div>${p.editable?`<div class="toolbar"><button class="secondary-button" data-edit-preset="${p.id}">编辑</button><button class="secondary-button" data-toggle-preset="${p.id}">${p.enabled?"停用":"启用"}</button></div>`:'<span class="muted">可在客户端选择使用</span>'}</article>`).join(""):'<p class="muted">还没有预设。点击新建预设，或请管理员提供公共预设。</p>';
+  list.innerHTML=state.presets.length?state.presets.map(p=>`<article class="preset-card"><div><h3>${esc(p.name)} <span class="role-label">${p.is_global?"公共预设":"我的预设"}</span></h3><p class="muted">${esc(p.description||"已保存提示词和模型配置")}</p>${!p.enabled?'<p class="form-message error">已停用，无法用于新提问</p>':""}</div>${p.editable?`<div class="toolbar"><button class="secondary-button" data-edit-preset="${p.id}">编辑</button><button class="secondary-button" data-toggle-preset="${p.id}">${p.enabled?"停用":"启用"}</button></div>`:'<span class="muted">可在客户端选择使用</span>'}</article>`).join(""):'<p class="muted">还没有预设。点击新建预设，或请管理员提供公共预设。</p>';
   list.querySelectorAll("[data-edit-preset]").forEach(b=>b.addEventListener("click",()=>presetModal(state.presets.find(p=>p.id===Number(b.dataset.editPreset)))));
   list.querySelectorAll("[data-toggle-preset]").forEach(b=>b.addEventListener("click",async()=>{
     const p=state.presets.find(p=>p.id===Number(b.dataset.togglePreset));
@@ -157,17 +157,17 @@ function presetModal(p) {
   const option=(value,label,current)=>`<option value="${value}" ${value===current?"selected":""}>${label}</option>`;
   modal(`<h3>${p?"编辑预设":"新建预设"}</h3><form id="preset-form" class="stack-form"><label>预设名称<input name="name" maxlength="120" value="${esc(p?.name||"")}" placeholder="例如：讲解屏幕上的题目" required></label>
     <label>用途说明<input name="description" maxlength="500" value="${esc(p?.description||"")}" placeholder="用一句话说明适合什么场景"></label>
-    <label>希望怎样回答<textarea name="prompt" rows="4" maxlength="20000" placeholder="例如：先给出答案，再用简单的语言讲解步骤。" required>${esc(p?.prompt||"")}</textarea></label>
-    <fieldset><legend>回答服务</legend><p class="muted">以下信息由你使用的人工智能服务商提供。保存一次后，日常使用只需选择预设。</p><div class="form-grid">
-    <label>服务类型<select name="provider">${[["openai_chat","OpenAI（对话模式）"],["openai_responses","OpenAI（回答模式）"],["deepseek","DeepSeek（深度求索）"],["gemini","Gemini（谷歌）"]].map(([v,l])=>option(v,l,p?.provider||"openai_chat")).join("")}</select><small class="muted">前两项分别对应服务商提供的对话和回答接口。</small></label>
-    <label>模型名称<input name="model_name" maxlength="160" value="${esc(p?.model_name||"")}" placeholder="填写服务商提供、支持识别图片的模型" required></label>
-    <label class="full">服务地址<input name="endpoint" type="url" maxlength="1000" value="${esc(p?.endpoint||"")}" placeholder="复制服务商提供的完整调用地址" required></label>
-    <label class="full">服务密钥${p?"（留空沿用已保存的密钥）":""}<input name="api_key" type="password" autocomplete="new-password" maxlength="4000" ${p?"":"required"}></label></div></fieldset>
-    <details><summary>更多设置（通常无需修改）</summary><div class="form-grid"><label>思考程度<select name="reasoning_effort">${[["none","使用服务默认设置"],["low","简单思考"],["medium","适度思考"],["high","深入思考"],["xhigh","尽量深入思考"]].map(([v,l])=>option(v,l,p?.reasoning_effort||"none")).join("")}</select><small class="muted">谷歌服务选择默认时会关闭额外思考。</small></label>
-    <label>最长等待时间（秒）<input name="timeout_seconds" type="number" min="10" max="600" value="${p?.timeout_seconds||120}"></label>
-    <label>回答灵活程度（可留空）<input name="temperature" type="number" min="0" max="2" step="0.1" value="${esc(p?.options?.temperature??"")}"></label>
-    <label>回答长度上限（可留空）<input name="output_limit" type="number" min="1" value="${esc(p?.options?.max_output_tokens??p?.options?.max_completion_tokens??p?.options?.max_tokens??"")}"></label></div></details>
-    ${state.user.role==="admin"&&!p?'<label class="checkbox-line"><input name="is_global" type="checkbox"> 提供给所有人使用（公共预设）</label>':""}
+    <label>提示词<textarea name="prompt" rows="4" maxlength="20000" placeholder="例如：先给出答案，再用简单的语言讲解步骤。" required>${esc(p?.prompt||"")}</textarea></label>
+    <fieldset><legend>模型配置</legend><div class="form-grid">
+    <label>请求格式<select name="provider">${[["openai_chat","OpenAI Chat Completions"],["openai_responses","OpenAI Responses"],["deepseek","DeepSeek Chat Completions"],["gemini","Gemini generateContent / streamGenerateContent"]].map(([v,l])=>option(v,l,p?.provider||"openai_chat")).join("")}</select></label>
+    <label>模型名称<input name="model_name" maxlength="160" value="${esc(p?.model_name||"")}" placeholder="填写支持图像输入的模型 ID" required></label>
+    <label class="full">模型端点<input name="endpoint" type="url" maxlength="1000" value="${esc(p?.endpoint||"")}" placeholder="完整 API URL，例如 https://api.openai.com/v1/responses" required></label>
+    <label class="full">API 密钥${p?"（留空沿用已保存的密钥）":""}<input name="api_key" type="password" autocomplete="new-password" maxlength="4000" ${p?"":"required"}></label></div></fieldset>
+    <details><summary>高级参数</summary><div class="form-grid"><label>推理强度（reasoning_effort）<select name="reasoning_effort">${[["none","none（不指定推理强度）"],["low","low（低）"],["medium","medium（中）"],["high","high（高）"],["xhigh","xhigh（极高）"]].map(([v,l])=>option(v,l,p?.reasoning_effort||"none")).join("")}</select><small class="muted">none：Chat Completions / Responses 不发送推理强度参数；Gemini 设置 thinkingBudget=0。</small></label>
+    <label>请求超时（秒）<input name="timeout_seconds" type="number" min="10" max="600" value="${p?.timeout_seconds||120}"></label>
+    <label>采样温度（temperature，可留空）<input name="temperature" type="number" min="0" max="2" step="0.1" value="${esc(p?.options?.temperature??"")}"></label>
+    <label>输出 Token 上限（可留空）<input name="output_limit" type="number" min="1" value="${esc(p?.options?.max_output_tokens??p?.options?.max_completion_tokens??p?.options?.max_tokens??"")}"></label></div></details>
+    ${state.user.role==="admin"&&!p?'<label class="checkbox-line"><input name="is_global" type="checkbox"> 公共预设</label>':""}
     <p id="preset-message" class="form-message"></p><div class="modal-actions"><button class="secondary-button" type="button" onclick="closeModal()">取消</button><button class="primary-button" type="submit">保存预设</button></div></form>`);
   $("#preset-form").addEventListener("submit",async e=>{
     e.preventDefault();const form=e.currentTarget,v=values(form),button=form.querySelector('[type="submit"]');button.disabled=true;
@@ -184,11 +184,11 @@ async function userAction(id,action){if(action==="delete"){if(!confirm("确定�
 async function renderAudit() {
   if(state.user.role!=="admin")return navigate("dashboard");
   const actions={"user.register":"申请注册", "auth.login":"登录账号", "auth.login_failed":"登录未成功", "auth.logout":"退出登录", "auth.password_changed":"修改密码", "device.pair_requested":"申请使用电脑", "device.unpaired":"取消电脑共享", "device.disconnected":"断开电脑", "request.created":"截图并提问", "request.cancelled":"停止回答", "user.updated":"更新账号设置", "user.deleted":"删除账号"};
-  const targets={user:"账号",device:"电脑",request:"问答"};
-  contentRoot().innerHTML='<div class="page-intro"><h3>操作记录</h3><button class="secondary-button" id="refresh-audit">刷新</button></div><section class="panel"><div id="audit-table" class="data-table-wrap">正在加载...</div></section>';
+  const targets={user:"用户",device:"设备",request:"请求"};
+  contentRoot().innerHTML='<div class="page-intro"><h3>审计日志</h3><button class="secondary-button" id="refresh-audit">刷新</button></div><section class="panel"><div id="audit-table" class="data-table-wrap">正在加载...</div></section>';
   $("#refresh-audit").addEventListener("click",renderAudit);
   const rows=(await api("/api/admin/audit-logs")).items;if(state.page!=="audit")return;
-  $("#audit-table").innerHTML='<table><thead><tr><th>时间</th><th>账号</th><th>操作</th><th>对象</th><th>访问地址</th></tr></thead><tbody>'+rows.map(r=>`<tr><td>${date(r.created_at)}</td><td>${esc(r.username==="system"?"系统":r.username)}</td><td>${esc(actions[r.action]||"更新设置")}</td><td>${esc(targets[r.target_type]||"设置")} ${esc(r.target_id||"")}</td><td>${esc(r.ip_address||"")}</td></tr>`).join("")+'</tbody></table>';
+  $("#audit-table").innerHTML='<table><thead><tr><th>时间</th><th>账号</th><th>操作</th><th>对象</th><th>IP 地址</th></tr></thead><tbody>'+rows.map(r=>`<tr><td>${date(r.created_at)}</td><td>${esc(r.username==="system"?"系统":r.username)}</td><td>${esc(actions[r.action]||r.action)}<div class="muted">${esc(r.action)}</div></td><td>${esc(targets[r.target_type]||r.target_type)} ${esc(r.target_id||"")}</td><td>${esc(r.ip_address||"")}</td></tr>`).join("")+'</tbody></table>';
 }
 function profileModal(){modal('<h3>账号设置</h3><p class="muted">当前账号：'+esc(state.user.username)+' · '+esc(state.user.display_name)+'</p><form id="password-form" class="stack-form"><label>当前密码<input name="current_password" type="password" required></label><label>新密码<input name="new_password" type="password" minlength="8" required></label><div class="modal-actions"><button type="button" class="secondary-button" onclick="closeModal()">取消</button><button class="primary-button" type="submit">修改密码</button></div></form>');$("#password-form").addEventListener("submit",async function(e){e.preventDefault();try{var result=await api("/api/auth/change-password",{method:"POST",body:JSON.stringify(values(e.currentTarget))});state.csrf=result.csrf_token;closeModal();notify("密码已修改");connectBrowser();}catch(err){notify(err.message,true);}});}
 boot().catch(function(err){notify(err.message,true);});
