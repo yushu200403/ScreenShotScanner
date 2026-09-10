@@ -492,14 +492,6 @@ tbody tr:hover td { background: #fbfdfc; }
 .answer-heading > div:first-child { min-width: 0; overflow-wrap: anywhere; }
 .answer-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; flex: none; }
 .answer-actions .screenshot-link { min-height: 36px; padding: 7px 10px; font-size: 12px; white-space: nowrap; }
-@media (max-width: 430px) {
-  .answer-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 12px; }
-  .answer-heading > div:first-child, .answer-actions { display: contents; }
-  .answer-actions .status-label { grid-column: 1 / -1; grid-row: 1; }
-  .answer-heading h4 { grid-column: 1; grid-row: 2; }
-  .answer-actions .screenshot-link { grid-column: 2; grid-row: 2; }
-  .answer-heading p { grid-column: 1 / -1; grid-row: 3; margin: 0; overflow-wrap: anywhere; }
-}
 .shared-preset { display: block; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #capture-action { min-width: 112px; white-space: nowrap; }
 .console-bar .menu-button { width: 40px; height: 40px; }
