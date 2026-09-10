@@ -491,7 +491,26 @@ tbody tr:hover td { background: #fbfdfc; }
 .answer-heading { flex-wrap: wrap; }
 .answer-heading > div:first-child { min-width: 0; overflow-wrap: anywhere; }
 .answer-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; flex: none; }
-.answer-actions .screenshot-link { min-height: 36px; padding: 7px 10px; font-size: 12px; white-space: nowrap; }
+.answer-actions .screenshot-link { width: 40px; height: 40px; min-height: 40px; padding: 0; }
+.screenshot-preview { width: min(1200px, calc(100vw - 32px)); height: min(900px, calc(100dvh - 32px)); max-width: none; max-height: none; margin: auto; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); overflow: hidden; }
+.screenshot-preview[open] { display: flex; flex-direction: column; }
+.screenshot-preview::backdrop { background: rgba(11, 26, 25, .65); }
+.screenshot-preview-toolbar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); flex: none; }
+.screenshot-preview-toolbar h3 { margin: 0 auto 0 0; font-size: 16px; }
+.screenshot-close { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; flex: none; }
+.screenshot-stage { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; padding: 12px; background: var(--canvas); }
+.screenshot-stage img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.screenshot-stage img[hidden] { display: none; }
+.screenshot-message { color: var(--muted); text-align: center; }
+.actual-size .screenshot-stage { display: block; }
+.actual-size .screenshot-stage img { max-width: none; max-height: none; margin: auto; }
+@media (max-width: 760px) {
+  .answer-actions .screenshot-link, .screenshot-close { width: 44px; height: 44px; min-height: 44px; }
+  .screenshot-preview { width: calc(100vw - 16px); height: calc(100dvh - 16px); }
+  .screenshot-preview-toolbar { padding: 8px; flex-wrap: wrap; }
+  .screenshot-preview-toolbar h3 { font-size: 14px; }
+  .screenshot-stage { padding: 8px; }
+}
 .shared-preset { display: block; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #capture-action { min-width: 112px; white-space: nowrap; }
 .console-bar .menu-button { width: 40px; height: 40px; }
