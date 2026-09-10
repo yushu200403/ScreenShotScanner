@@ -27,8 +27,8 @@ class ScreenAnswerClient:
         self.window_icons = [ImageTk.PhotoImage(render_icon(size), master=self.root) for size in (32, 256)]
         self.root.iconphoto(True, *self.window_icons)
         self.ui_scale = self.root.winfo_fpixels("1i") / 96
-        self.root.geometry(f"{round(520 * self.ui_scale)}x{round(620 * self.ui_scale)}")
-        self.root.minsize(round(500 * self.ui_scale), round(600 * self.ui_scale))
+        self.root.geometry(f"{round(520 * self.ui_scale)}x{round(720 * self.ui_scale)}")
+        self.root.minsize(round(500 * self.ui_scale), round(700 * self.ui_scale))
         self.root.protocol("WM_DELETE_WINDOW", self.exit_application)
         self.root.bind("<Unmap>", self._on_unmap)
         self.store = SecureStore()
@@ -152,21 +152,11 @@ class ScreenAnswerClient:
         self.settings_panel = ttk.Frame(self.outer, style="Card.TFrame", padding=px(18))
         self.account_label = ttk.Label(self.settings_panel, style="Chip.TLabel")
         self.account_label.pack(anchor="w", pady=(px(0), px(16)))
-        computer_details = ttk.Frame(self.settings_panel, style="CardBody.TFrame")
-        computer_details.pack(fill="x", pady=(0, px(16)))
-        computer_details.columnconfigure(0, weight=1)
-        computer_info = ttk.Frame(computer_details, style="CardBody.TFrame")
-        computer_info.grid(row=0, column=0, sticky="nw")
+        computer_info = ttk.Frame(self.settings_panel, style="CardBody.TFrame")
+        computer_info.pack(fill="x", pady=(0, px(16)))
         ttk.Label(computer_info, text="当前电脑", style="CardField.TLabel").pack(anchor="w")
-        ttk.Label(computer_info, textvariable=self.name_var, style="CardName.TLabel", wraplength=px(230)).pack(anchor="w", pady=(px(5), px(12)))
-        ttk.Label(computer_info, text="在网页选择预设、管理电脑并查看回答。", style="CardMuted.TLabel", wraplength=px(230)).pack(anchor="w")
-        self.mobile_qr_panel = ttk.Frame(computer_details, style="CardBody.TFrame")
-        self.mobile_qr_panel.grid(row=0, column=1, sticky="ne", padx=(px(12), 0))
-        self.mobile_qr_label = ttk.Label(self.mobile_qr_panel, style="CardMuted.TLabel", wraplength=px(160), justify="center")
-        self.mobile_qr_label.pack()
-        self.mobile_qr_caption = ttk.Label(self.mobile_qr_panel, text="手机扫码打开网站", style="CardMuted.TLabel")
-        self.mobile_qr_caption.pack(pady=(px(4), 0))
-        self.mobile_qr_panel.grid_remove()
+        ttk.Label(computer_info, textvariable=self.name_var, style="CardName.TLabel", wraplength=px(400)).pack(anchor="w", pady=(px(5), px(12)))
+        ttk.Label(computer_info, text="在网页选择预设、管理电脑并查看回答。", style="CardMuted.TLabel", wraplength=px(400)).pack(anchor="w")
         ttk.Button(self.settings_panel, text="打开截图问答", style="Primary.TButton", command=self.open_web).pack(fill="x", pady=(px(0), px(8)))
         self.reconnect_button = ttk.Button(self.settings_panel, text="重新连接", command=self.connect)
         self.reconnect_button.pack(fill="x", pady=(px(0), px(8)))
@@ -175,6 +165,11 @@ class ScreenAnswerClient:
         self.status_panel.pack(fill="x", pady=(px(18), px(0)))
         ttk.Frame(self.status_panel, style="StatusEdge.TFrame", width=px(3)).pack(side="left", fill="y")
         ttk.Label(self.status_panel, textvariable=self.status_var, style="Status.TLabel", wraplength=px(380)).pack(side="left", fill="x", expand=True)
+        self.mobile_qr_panel = ttk.Frame(self.outer)
+        self.mobile_qr_label = ttk.Label(self.mobile_qr_panel, style="Muted.TLabel", wraplength=px(400), justify="center")
+        self.mobile_qr_label.pack()
+        self.mobile_qr_caption = ttk.Label(self.mobile_qr_panel, text="手机扫码打开网站", style="Muted.TLabel")
+        self.mobile_qr_caption.pack(pady=(px(4), 0))
 
     def _background(self, work, done):
         if self.busy:
@@ -250,7 +245,7 @@ class ScreenAnswerClient:
             self.password_var.set("")
             self.name_var.set(result["computer"]["name"])
             self.login_panel.pack_forget()
-            self.settings_panel.pack(fill="x", before=self.outer.winfo_children()[-1])
+            self.settings_panel.pack(fill="x", before=self.status_panel)
             self.account_label.configure(text="已登录：" + self.user["display_name"])
             self._hide_mobile_qr()
             self._save_current()
@@ -296,7 +291,7 @@ class ScreenAnswerClient:
         self.user = None
         self.code_var.set("尚未连接")
         self.settings_panel.pack_forget()
-        self.login_panel.pack(fill="x", before=self.outer.winfo_children()[-1])
+        self.login_panel.pack(fill="x", before=self.status_panel)
         self.password_var.set("")
         self._save_current()
 
@@ -361,10 +356,10 @@ class ScreenAnswerClient:
             self.mobile_qr_image = None
             self.mobile_qr_label.configure(image="", text=str(exc))
             self.mobile_qr_caption.configure(text="")
-        self.mobile_qr_panel.grid()
+        self.mobile_qr_panel.pack(side="bottom", fill="x", pady=(round(16 * self.ui_scale), 0))
 
     def _hide_mobile_qr(self):
-        self.mobile_qr_panel.grid_remove()
+        self.mobile_qr_panel.pack_forget()
         self.mobile_qr_label.configure(image="", text="")
         self.mobile_qr_image = None
 

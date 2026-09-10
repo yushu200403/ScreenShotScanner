@@ -31,17 +31,11 @@ class Widget:
     def configure(self, **kwargs):
         self.options.update(kwargs)
 
-    def grid(self):
+    def pack(self, **kwargs):
         self.visible = True
 
-    def grid_remove(self):
-        self.visible = False
-
-    def pack(self, **kwargs):
-        pass
-
     def pack_forget(self):
-        pass
+        self.visible = False
 
 
 def window():
@@ -61,6 +55,7 @@ def window():
     peer.account = None
     peer.login_panel = Widget()
     peer.settings_panel = Widget()
+    peer.status_panel = Widget()
     peer.account_label = Widget()
     peer.reconnect_button = Widget()
     peer.mobile_qr_panel = Widget()
@@ -70,7 +65,6 @@ def window():
     peer.ui_scale = 1
     peer.root = object()
     peer.quitting = False
-    peer.outer = SimpleNamespace(winfo_children=lambda: [Widget()])
     peer.written = []
     peer.store = SimpleNamespace(save=peer.written.append)
     peer.started = []
