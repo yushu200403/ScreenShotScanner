@@ -13,6 +13,7 @@ $temporaryRoot = Join-Path $PSScriptRoot ".pyinstaller-tmp"
 $temporaryBuild = Join-Path $temporaryRoot "build"
 $temporaryDist = Join-Path $temporaryRoot "dist"
 $temporarySpec = Join-Path $temporaryRoot "spec"
+$iconFile = Join-Path $temporaryRoot "app.ico"
 if (-not $SkipInstall) {
     & $Python -m pip install -r requirements.txt
     if ($LASTEXITCODE -ne 0) { throw "客户端依赖安装失败" }
@@ -21,6 +22,9 @@ $buildArguments = @("-m", "PyInstaller", "--noconfirm", "--onefile", "--windowed
 $buildArguments += @("--add-data", ((Join-Path $PSScriptRoot "..\server\app\release.json") + ";."))
 if ($Clean) { $buildArguments += "--clean" }
 try {
+    & $Python "app_icon.py" $iconFile
+    if ($LASTEXITCODE -ne 0) { throw "客户端图标生成失败" }
+    $buildArguments += @("--icon", $iconFile)
     & $Python @buildArguments "app.py"
     if ($LASTEXITCODE -ne 0) { throw "客户端打包失败" }
     $builtFile = Join-Path $temporaryDist "ScreenShotScannerClient.exe"

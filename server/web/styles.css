@@ -160,7 +160,7 @@ label { line-height: 1.6; }
 label small, .endpoint-note { font-size: 12px; line-height: 1.65; font-weight: 400; overflow-wrap: anywhere; }
 .device-sidebar { padding: 16px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .device-sidebar > .panel-title { flex: none; }
-#device-list { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
+#device-list { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable both-edges; }
 .device-row { border-radius: 6px; padding: 14px 12px; flex-wrap: wrap; }
 .device-row.selected { background: #e6f2ed; border-color: var(--line); box-shadow: none; }
 .device-name { font-size: 14px; }
@@ -375,7 +375,7 @@ tbody tr:hover td { background: #fbfdfc; }
 /* --- 弹窗与提示 --- */
 .modal-backdrop { background: rgba(11, 26, 25, .44); backdrop-filter: blur(3px); animation: view-in .16s ease-out; }
 .modal { border-color: rgba(226, 234, 231, .9); border-radius: 6px; box-shadow: var(--shadow-lg); animation: modal-rise .2s cubic-bezier(.2, .8, .3, 1); }
-.modal-close { padding: 6px 12px; border-radius: 6px; background: var(--soft); }
+.modal-close { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border-radius: 6px; background: var(--soft); }
 .modal-close:hover { background: #e2ebe8; }
 .settings-section { border-top-color: #eaf0ee; }
 #toast-region { top: 86px; }
@@ -416,7 +416,12 @@ tbody tr:hover td { background: #fbfdfc; }
   /* 底部导航需要相对视口定位，因此移动端取消头部的 backdrop-filter（会生成包含块） */
   .app-header { background: #fff; backdrop-filter: none; }
   .header-inner { min-height: 56px; padding: 8px 14px; gap: 8px; flex-wrap: nowrap; }
-  .header-actions { gap: 4px; }
+  .brand-mark { flex: none; gap: 6px; font-size: 14px; }
+  .brand-mark span { display: inline; }
+  .header-actions { gap: 4px; min-width: 0; }
+  .connection-indicator { min-width: 0; }
+  .connection-indicator > span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .connection-indicator .status-dot { flex: none; }
   .header-actions .ri-user { display: inline-block; }
   .header-actions .quiet-button { padding: 7px 9px; }
   #account-name { max-width: 74px; }
@@ -443,6 +448,7 @@ tbody tr:hover td { background: #fbfdfc; }
   .modal-backdrop { padding: 0; place-items: end stretch; }
   .modal { width: 100%; max-height: 92dvh; padding: 22px 16px calc(22px + env(safe-area-inset-bottom)); border-width: 1px 0 0; border-radius: 6px 6px 0 0; animation: sheet-up .24s cubic-bezier(.2, .8, .3, 1); }
   .modal h3 { padding-right: 64px; font-size: 17px; }
+  .modal-close { width: 44px; height: 44px; top: 12px; right: 12px; }
   .modal-actions { gap: 8px; }
   .modal-actions button { flex: 1 1 auto; }
   /* 手机上提示改为贴近底部导航，避免遮挡正在阅读的内容 */
@@ -482,6 +488,10 @@ tbody tr:hover td { background: #fbfdfc; }
 .preset-choice-info .muted { font-size: 12px; }
 .preset-choice-check { flex: none; font-size: 12px; color: var(--muted); }
 .preset-choice.selected .preset-choice-check { color: var(--accent); }
+.answer-heading { flex-wrap: wrap; }
+.answer-heading > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.answer-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; flex: none; }
+.answer-actions .screenshot-link { min-height: 36px; padding: 7px 10px; font-size: 12px; white-space: nowrap; }
 .shared-preset { display: block; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #capture-action { min-width: 112px; white-space: nowrap; }
 .console-bar .menu-button { width: 40px; height: 40px; }

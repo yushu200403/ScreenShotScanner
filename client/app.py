@@ -7,10 +7,11 @@ import webbrowser
 from tkinter import ttk
 from uuid import uuid4
 
-from PIL import Image, ImageDraw
+from PIL import ImageTk
 import pystray
 
 from account import AccountClient, AccountError
+from app_icon import render_icon
 from connection import ClientConnection
 from screenshot import enable_high_dpi
 from secure_store import SecureStore
@@ -22,6 +23,8 @@ class ScreenAnswerClient:
         enable_high_dpi()
         self.root = tk.Tk()
         self.root.title("屏幕问答器 · " + APP_VERSION)
+        self.window_icons = [ImageTk.PhotoImage(render_icon(size), master=self.root) for size in (32, 256)]
+        self.root.iconphoto(True, *self.window_icons)
         self.ui_scale = self.root.winfo_fpixels("1i") / 96
         self.root.geometry(f"{round(520 * self.ui_scale)}x{round(620 * self.ui_scale)}")
         self.root.minsize(round(500 * self.ui_scale), round(600 * self.ui_scale))
@@ -121,9 +124,8 @@ class ScreenAnswerClient:
         self.outer.pack(fill="both", expand=True)
         header = ttk.Frame(self.outer)
         header.pack(fill="x", pady=(0, px(18)))
-        mark = tk.Canvas(header, width=px(42), height=px(42), background=self.CANVAS, highlightthickness=0, borderwidth=0)
-        mark.pack(side="left")
-        self._draw_mark(mark, px(42))
+        self.header_icon = ImageTk.PhotoImage(render_icon(px(42)), master=self.root)
+        ttk.Label(header, image=self.header_icon).pack(side="left")
         heading = ttk.Frame(header)
         heading.pack(side="left", padx=(px(12), 0))
         ttk.Label(heading, text="屏幕问答器", style="Title.TLabel").pack(anchor="w")
@@ -158,21 +160,6 @@ class ScreenAnswerClient:
         self.status_panel.pack(fill="x", pady=(px(18), px(0)))
         ttk.Frame(self.status_panel, style="StatusEdge.TFrame", width=px(3)).pack(side="left", fill="y")
         ttk.Label(self.status_panel, textvariable=self.status_var, style="Status.TLabel", wraplength=px(380)).pack(side="left", fill="x", expand=True)
-
-    def _draw_mark(self, canvas, size):
-        """绘制与网页标识一致的应用图标。"""
-        def rounded(x1, y1, x2, y2, radius, fill):
-            points = [x1 + radius, y1, x2 - radius, y1, x2, y1, x2, y1 + radius, x2, y2 - radius,
-                      x2, y2, x2 - radius, y2, x1 + radius, y2, x1, y2, x1, y2 - radius, x1, y1 + radius, x1, y1]
-            canvas.create_polygon(points, smooth=True, fill=fill, outline=fill)
-        rounded(1, 1, size - 1, size - 1, size * 0.28, self.ACCENT)
-        inset, arm = size * 0.24, size * 0.13
-        width = max(2, round(size * 0.055))
-        for x, y, dx, dy in ((inset, inset, 1, 1), (size - inset, inset, -1, 1),
-                             (inset, size - inset, 1, -1), (size - inset, size - inset, -1, -1)):
-            canvas.create_line(x, y + dy * arm, x, y, x + dx * arm, y, fill="#d9ede7", width=width,
-                               capstyle="round", joinstyle="round")
-        rounded(size * 0.34, size * 0.38, size * 0.66, size * 0.62, size * 0.05, "#ffffff")
 
     def _background(self, work, done):
         if self.busy:
@@ -361,11 +348,7 @@ class ScreenAnswerClient:
     def _start_tray(self):
         if self.tray:
             return
-        image = Image.new("RGB", (64, 64), "#147d73")
-        draw = ImageDraw.Draw(image)
-        draw.rectangle((17, 13, 47, 51), fill="#e7f4f1")
-        draw.rectangle((23, 21, 41, 27), fill="#147d73")
-        draw.rectangle((23, 34, 41, 40), fill="#147d73")
+        image = render_icon(64)
         self.tray = pystray.Icon("ScreenShotScanner", image, "屏幕问答器客户端", pystray.Menu(
             pystray.MenuItem("显示窗口", lambda: self.ui_events.put(self.show_window), default=True),
             pystray.MenuItem("断开连接", lambda: self.ui_events.put(self.disconnect)),
