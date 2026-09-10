@@ -16,6 +16,7 @@ client/dist/
 client/.venv-build/
 client/.pyinstaller-tmp/
 client/ScreenShotScannerClient.exe
+client/ScreenShotScannerClient-*.exe
 client/*.spec
 server/instance/
 .DS_Store

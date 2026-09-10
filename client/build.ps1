@@ -1,11 +1,14 @@
-param([string]$Python, [switch]$SkipInstall, [switch]$Clean)
+param([string]$Python, [switch]$SkipInstall, [switch]$Clean, [string]$OutputName = "ScreenShotScannerClient.exe")
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 $projectPython = Join-Path $PSScriptRoot ".venv-build\Scripts\python.exe"
 if (-not $Python) {
     $Python = if (Test-Path -LiteralPath $projectPython) { $projectPython } else { "python" }
 }
-$outputFile = Join-Path $PSScriptRoot "ScreenShotScannerClient.exe"
+if ([IO.Path]::GetFileName($OutputName) -ne $OutputName -or -not $OutputName.EndsWith(".exe")) {
+    throw "输出名称必须是不含目录的 EXE 文件名"
+}
+$outputFile = Join-Path $PSScriptRoot $OutputName
 $temporaryRoot = Join-Path $PSScriptRoot ".pyinstaller-tmp"
 $temporaryBuild = Join-Path $temporaryRoot "build"
 $temporaryDist = Join-Path $temporaryRoot "dist"

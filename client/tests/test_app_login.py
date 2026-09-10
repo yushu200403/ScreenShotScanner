@@ -1,4 +1,5 @@
 import importlib.util
+import queue
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -35,14 +36,14 @@ class Widget:
 def window():
     peer = desktop_window.ScreenAnswerClient.__new__(desktop_window.ScreenAnswerClient)
     peer.busy = False
+    peer.quitting = False
+    peer.ui_events = queue.Queue()
     peer.server_var = Value("http://localhost")
     peer.username_var = Value("tester")
     peer.password_var = Value()
     peer.name_var = Value("书房电脑")
     peer.status_var = Value()
-    peer.preset_var = Value()
     peer.code_var = Value()
-    peer.presets = [{"id": 999, "name": "上一账号预设"}]
     peer.connection_code = "123456789"
     peer.identities = {}
     peer.saved = {"server_url": "http://localhost", "username": "tester", "session_token": "saved-login"}
@@ -50,13 +51,11 @@ def window():
     peer.login_panel = Widget()
     peer.settings_panel = Widget()
     peer.account_label = Widget()
-    peer.preset_combo = Widget()
     peer.outer = SimpleNamespace(winfo_children=lambda: [Widget()])
     peer.written = []
     peer.store = SimpleNamespace(save=peer.written.append)
     peer.started = []
     peer.connection = SimpleNamespace(start=lambda *args: peer.started.append(args), disconnect=lambda: None)
-    peer.refresh_presets = lambda: None
     peer._background = lambda work, done: done(work())
     return peer
 
@@ -89,6 +88,15 @@ def test_window_can_log_out_locally_when_server_is_unreachable():
     peer.account = SimpleNamespace(token="saved-login", logout=unavailable)
     peer.logout()
     assert peer.account is None
-    assert peer.presets == []
     assert peer.written[-1]["session_token"] == ""
     assert "已在这台电脑退出登录" in peer.status_var.get()
+
+
+def test_server_name_update_is_saved_on_ui_thread():
+    peer = window()
+    peer.account = SimpleNamespace(token="saved-login")
+    peer._settings_callback("网页设置的电脑名称")
+    assert peer.name_var.get() == "书房电脑"
+    peer.ui_events.get_nowait()()
+    assert peer.name_var.get() == "网页设置的电脑名称"
+    assert peer.written[-1]["device_name"] == "网页设置的电脑名称"

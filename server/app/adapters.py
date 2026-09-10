@@ -8,6 +8,7 @@ from urllib.parse import urlencode, urlparse, parse_qsl, urlunparse
 import requests
 
 from .security import decrypt_secret
+from .endpoints import request_endpoint
 
 
 class AdapterError(Exception):
@@ -210,7 +211,7 @@ def stream_chat(profile, model, prompt, question, image_path, on_event, cancel_e
             {"type": "image_url", "image_url": {"url": image_url}},
         ]}],
     }
-    response = _post(profile.endpoint, decrypt_secret(profile.api_key_ciphertext), body,
+    response = _post(request_endpoint(profile.endpoint, profile.provider), decrypt_secret(profile.api_key_ciphertext), body,
                      profile.timeout_seconds)
     done = _watch_cancellation(response, cancel_event)
     emitted = False
@@ -299,7 +300,7 @@ def stream_responses(profile, model, prompt, question, image_path, on_event, can
     }
     if reasoning_effort:
         body["reasoning"] = {"effort": reasoning_effort, "summary": reasoning_summary}
-    response = _post(profile.endpoint, decrypt_secret(profile.api_key_ciphertext), body,
+    response = _post(request_endpoint(profile.endpoint, profile.provider), decrypt_secret(profile.api_key_ciphertext), body,
                      profile.timeout_seconds)
     done = _watch_cancellation(response, cancel_event)
     emitted = False

@@ -5,6 +5,7 @@ from flask import Blueprint, jsonify
 from sqlalchemy import or_
 
 from .extensions import db
+from .endpoints import base_endpoint
 from .lifecycle import serialized
 from .models import Device, DevicePreference, ModelProfile, Preset, PromptTemplate
 from .security import csrf_required, encrypt_secret, error, json_body, login_required
@@ -33,7 +34,7 @@ def preset_json(preset, user):
     result["editable"] = preset.owner_id == user.id or user.role == "admin"
     if result["editable"]:
         result.update(prompt=preset.prompt.content, provider=preset.profile.provider,
-                      endpoint=preset.profile.endpoint, model_name=preset.model_name,
+                      endpoint=base_endpoint(preset.profile.endpoint, preset.profile.provider), model_name=preset.model_name,
                       reasoning_effort=preset.reasoning_effort,
                       timeout_seconds=preset.profile.timeout_seconds,
                       options=json.loads(preset.profile.options_json), api_key_configured=True)
@@ -77,6 +78,7 @@ def save_preset(user, payload, preset=None):
         raise ValueError("请选择请求格式")
     if not isinstance(effort, str) or effort not in EFFORTS:
         raise ValueError("请选择推理强度")
+    endpoint = base_endpoint(endpoint, provider)
     parsed = urlsplit(endpoint)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
         raise ValueError("模型端点格式不正确，请填写完整的 HTTP/HTTPS API URL")

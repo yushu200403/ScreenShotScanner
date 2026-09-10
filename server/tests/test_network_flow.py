@@ -58,7 +58,7 @@ def test_protocols_over_real_http(app, model_server, tmp_path, provider):
     path = tmp_path / "截图.jpg"
     Image.new("RGB", (24, 24), "white").save(path)
     with app.app_context():
-        profile = SimpleNamespace(provider=provider, endpoint=base + "/" + provider,
+        profile = SimpleNamespace(provider=provider, endpoint=base + ("/gemini" if provider == "gemini" else "/v1/"),
                                   api_key_ciphertext=encrypt_secret("local-test-key"), timeout_seconds=10,
                                   options_json='{"include_thoughts":true}')
         events = []
@@ -70,6 +70,7 @@ def test_protocols_over_real_http(app, model_server, tmp_path, provider):
         assert headers["x-goog-api-key"] == "local-test-key"
         assert body["contents"][0]["parts"][1]["inline_data"]["data"]
     else:
+        assert endpoint == ("/v1/responses" if provider == "openai_responses" else "/v1/chat/completions")
         assert headers["Authorization"] == "Bearer local-test-key"
         assert "include_thoughts" not in body
 
@@ -91,9 +92,9 @@ def test_browser_device_upload_and_answer_over_network(app, model_server):
                                       "device_id": "networkdevice123456789"}, timeout=5).json()
         token = desktop["session_token"]
         preset = session.post(base + "/api/presets", headers=headers, json={"name": "本地测试预设", "provider": "openai_chat",
-                               "endpoint": model_server[0] + "/chat", "api_key": "local-test-key", "model_name": "vision",
+                               "endpoint": model_server[0] + "/v1", "api_key": "local-test-key", "model_name": "vision",
                                "prompt": "解释屏幕内容"}, timeout=5).json()["preset"]
-        selected = requests.put(base + "/api/desktop/settings", headers={"X-Client-Version": APP_VERSION, "Authorization": "Bearer " + token},
+        selected = session.put(base + f"/api/devices/{desktop['computer']['id']}/settings", headers=headers,
                                 json={"name": "网络测试电脑", "preset_id": preset["id"]}, timeout=5)
         assert selected.status_code == 200
         cookie = "; ".join(f"{key}={value}" for key, value in session.cookies.items())

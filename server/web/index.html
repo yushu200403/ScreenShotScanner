@@ -4,16 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>屏幕问答器</title>
-  <link rel="icon" href="data:,">
+  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+  <link rel="stylesheet" href="/assets/icons.css">
   <link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body>
   <div id="toast-region" aria-live="polite"></div>
   <section id="auth-view" class="auth-layout">
     <div class="auth-brand">
+      <img src="/assets/favicon.svg" width="56" height="56" alt="">
       <span class="eyebrow">屏幕问答</span>
-      <h1>屏幕问答器</h1>
-      <div class="auth-status-line"><span class="status-dot online"></span>在网页提问，查看屏幕中的答案</div>
+      <h1>看见问题，<br>找到答案。</h1>
+      <div class="auth-status-line"><span class="status-dot online"></span>连接电脑，选择预设，开始截图问答。</div>
     </div>
     <div class="auth-panel">
       <div class="auth-tabs">
@@ -27,10 +29,10 @@
         <p id="login-message" class="form-message"></p>
       </form>
       <form id="register-form" class="auth-form hidden">
-        <label>账号<input name="username" autocomplete="username" pattern="[A-Za-z0-9_.\-]{3,80}" required></label>
-        <label>显示名称<input name="display_name" required></label>
-        <label>密码<input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
-        <label>注册备注<textarea name="registration_note" rows="3" maxlength="500" required></textarea></label>
+        <label>账号<input name="username" placeholder="例如：zhangsan_01" autocomplete="username" pattern="[A-Za-z0-9_.\-]{3,80}" required></label>
+        <label>显示名称<input name="display_name" placeholder="例如：张三" required></label>
+        <label>密码<input name="password" type="password" autocomplete="new-password" placeholder="至少 8 位" minlength="8" required></label>
+        <label>注册备注<textarea name="registration_note" placeholder="例如：用于日常阅读与学习" rows="3" maxlength="500" required></textarea></label>
         <button class="primary-button" type="submit">提交注册申请</button>
         <p id="register-message" class="form-message"></p>
       </form>
@@ -38,25 +40,21 @@
   </section>
 
   <section id="app-view" class="app-shell hidden">
-    <aside class="sidebar">
-      <div class="brand-mark"><span class="brand-square">S</span><span>屏幕问答器</span></div>
-      <nav id="main-nav" class="main-nav">
-        <button data-page="dashboard" class="nav-item active"><span class="nav-glyph">◆</span>我的电脑</button>
-        <button data-page="history" class="nav-item"><span class="nav-glyph">▤</span>问答历史</button>
-        <button data-page="presets" class="nav-item"><span class="nav-glyph">✦</span>预设</button>
-        <button data-page="users" class="nav-item admin-only"><span class="nav-glyph">◎</span>账号管理</button>
-        <button data-page="audit" class="nav-item admin-only"><span class="nav-glyph">≡</span>审计日志</button>
-      </nav>
-      <div class="sidebar-foot">
-        <div id="connection-indicator" class="connection-indicator"><span class="status-dot"></span><span>正在连接</span></div>
-        <button id="logout-button" class="quiet-button">退出登录</button>
+    <header class="app-header">
+      <div class="header-inner">
+        <div class="brand-mark"><img src="/assets/favicon.svg" width="34" height="34" alt=""><span>屏幕问答器</span></div>
+        <nav id="main-nav" class="main-nav" aria-label="主导航">
+          <button data-page="dashboard" class="nav-item active"><i class="ri ri-screenshot" aria-hidden="true"></i>截图问答</button>
+          <button data-page="history" class="nav-item"><i class="ri ri-history" aria-hidden="true"></i>问答历史</button>
+          <button data-page="presets" class="nav-item"><i class="ri ri-sliders" aria-hidden="true"></i>预设</button>
+          <button data-page="users" class="nav-item admin-only"><i class="ri ri-users" aria-hidden="true"></i>账号管理</button>
+          <button data-page="audit" class="nav-item admin-only"><i class="ri ri-file" aria-hidden="true"></i>审计日志</button>
+        </nav>
+        <div class="header-actions"><button id="profile-button" class="quiet-button" title="账号设置"><i class="ri ri-user" aria-hidden="true"></i><span id="account-name"></span></button><span id="account-role" class="role-label"></span><button id="logout-button" class="quiet-button">退出</button></div>
       </div>
-    </aside>
+    </header>
     <main class="main-content">
-      <header class="topbar">
-        <div><span class="eyebrow" id="page-eyebrow">屏幕问答</span><h2 id="page-title">我的电脑</h2></div>
-        <div class="account-menu"><span id="account-name"></span><span id="account-role" class="role-label"></span><button id="profile-button" class="quiet-button">账号设置</button></div>
-      </header>
+      <div class="workspace-heading"><div><span class="eyebrow" id="page-eyebrow">屏幕问答</span><h2 id="page-title">截图问答</h2></div><div id="connection-indicator" class="connection-indicator"><span class="status-dot"></span><span>正在连接</span></div></div>
       <div id="page-content" class="page-content"></div>
     </main>
   </section>

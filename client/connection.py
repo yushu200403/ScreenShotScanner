@@ -132,8 +132,16 @@ class ClientConnection:
             self.connection_code = message.get("connection_code", self.connection_code)
             self.reset_on_connect = False
             self.previous_connection_code = ""
+            if message.get("name") and getattr(self, "on_settings", None):
+                self.device_name = message["name"]
+                self.on_settings(self.device_name)
             self.on_status("已连接，等待网页操作", True)
             self.on_connected(self.connection_code)
+            return
+        if message_type == "settings_updated":
+            self.device_name = message.get("name", self.device_name)
+            if getattr(self, "on_settings", None):
+                self.on_settings(self.device_name)
             return
         if message_type == "approval_request":
             self.on_approval(message, lambda approved: self._send({

@@ -9,6 +9,7 @@ from .api import api_bp
 from .realtime import sock
 from .presets import presets_bp
 from .desktop import desktop_bp
+from .computers import computers_bp
 from .versioning import APP_VERSION, prepare_database
 
 
@@ -26,6 +27,7 @@ def create_app():
     db.init_app(app)
     sock.init_app(app)
     app.register_blueprint(api_bp, url_prefix="/api")
+    app.register_blueprint(computers_bp, url_prefix="/api")
     app.register_blueprint(presets_bp, url_prefix="/api")
     app.register_blueprint(desktop_bp, url_prefix="/api/desktop")
 
@@ -68,7 +70,7 @@ def create_app():
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-            "script-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:"
+            "font-src 'self' https://cdn.bootcdn.net; script-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:"
         )
         return response
 

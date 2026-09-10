@@ -1,0 +1,15 @@
+@font-face{font-family:remixicon;src:url('https://cdn.bootcdn.net/ajax/libs/remixicon/4.6.0/remixicon.woff2') format('woff2'),url('/assets/fonts/remixicon.woff2') format('woff2');font-display:swap;}
+.ri{font-family:remixicon!important;font-style:normal;font-weight:normal;font-size:20px;line-height:1;display:inline-block;flex-shrink:0;}
+.ri-screenshot:before{content:"\f0c5";}
+.ri-history:before{content:"\ee17";}
+.ri-sliders:before{content:"\ec9d";}
+.ri-users:before{content:"\ede3";}
+.ri-file:before{content:"\ecef";}
+.ri-user:before{content:"\f256";}
+.ri-computer:before{content:"\ebca";}
+.ri-add:before{content:"\ea13";}
+.ri-arrow:before{content:"\ea70";}
+.ri-settings:before{content:"\f0e6";}
+.ri-refresh:before{content:"\f064";}
+.ri-share:before{content:"\f0fe";}
+.ri-search:before{content:"\f0d1";}

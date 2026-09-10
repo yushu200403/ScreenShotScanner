@@ -45,18 +45,16 @@ def _parse(raw):
 
 
 @serialized
-def _handle_approval(ws, device, message):
+def decide_pairing(device, message):
     pair_id = str(message.get("pair_request_id", ""))
     decision = message.get("decision")
     pair = db.session.get(PairRequest, pair_id)
     if not pair or pair.device_id != device.id or pair.status != "pending":
-        _send(ws, {"type": "error", "code": "pairing_not_found", "message": "使用申请已失效，请重新申请"})
-        return
+        return {"type": "error", "code": "pairing_not_found", "message": "使用申请已失效，请重新申请"}
     if device.code_invalidated or pair.user.status != "active" or is_expired(pair.expires_at):
         pair.status = "expired"
         db.session.commit()
-        _send(ws, {"type": "error", "code": "pairing_expired", "message": "使用申请已过期，请重新申请"})
-        return
+        return {"type": "error", "code": "pairing_expired", "message": "使用申请已过期，请重新申请"}
     pair.status = "approved" if decision == "approve" else "rejected"
     pair.decided_at = utcnow()
     if pair.status == "approved":
@@ -76,7 +74,13 @@ def _handle_approval(ws, device, message):
     db.session.commit()
     broadcast_user(pair.user_id, {"type": "pairing_update", "pair_request_id": pair.id,
                                   "device_id": device.id, "status": pair.status})
-    _send(ws, {"type": "approval_recorded", "pair_request_id": pair.id, "status": pair.status})
+    broadcast_user(device.owner_id, {"type": "device_update", "device_id": device.id})
+    return {"type": "approval_recorded", "pair_request_id": pair.id, "status": pair.status}
+
+
+@serialized
+def _handle_approval(ws, device, message):
+    _send(ws, decide_pairing(device, message))
 
 
 @serialized
@@ -175,19 +179,15 @@ def _authenticate_device(ws, first):
         _device_error(ws, "登录信息与这台电脑不匹配，请重新登录")
         return
     code = str(first.get("connection_code", ""))
-    if not re.fullmatch(r"[0-9]{9}", code) or device.code_invalidated:
-        code = new_connection_code()
-    while Device.query.filter(Device.connection_code_hash == hash_connection_code(code), Device.id != device.id).first():
-        code = new_connection_code()
-    if device.connection_code_hash and device.connection_code_hash != hash_connection_code(code):
-        affected = revoke_access(device, "这台电脑已更换邀请码")
-        for user_id in affected:
-            broadcast_user(user_id, {"type": "device_update", "device_id": device.id})
-    else:
-        stop_requests(device, "这台电脑已重新连接，请重试", CAPTURE_STATUSES)
-        expire_pairings(device)
-    device.connection_code_hash, device.connection_code_last4 = hash_connection_code(code), code[-4:]
-    device.code_invalidated = False
+    if not device.connection_code_hash:
+        if not re.fullmatch(r"[0-9]{9}", code):
+            code = new_connection_code()
+        while Device.query.filter(Device.connection_code_hash == hash_connection_code(code), Device.id != device.id).first():
+            code = new_connection_code()
+        device.connection_code_hash, device.connection_code_last4 = hash_connection_code(code), code[-4:]
+        device.code_invalidated = False
+    stop_requests(device, "这台电脑已重新连接，请重试", CAPTURE_STATUSES)
+    expire_pairings(device)
     device.online = True
     device.client_version = APP_VERSION
     device.platform = str(first.get("platform") or "")[:80]
@@ -201,7 +201,7 @@ def _authenticate_device(ws, first):
         except Exception:
             pass
     _send(ws, {"type": "hello_ack", "device_id": device.device_id, "server_version": APP_VERSION,
-               "connection_code_last4": device.connection_code_last4, "connection_code": code})
+               "connection_code_last4": device.connection_code_last4, "connection_code": code, "name": device.name})
     _broadcast_device(device, {"type": "device_update", "device_id": device.id,
                                "online": True, "name": device.name})
     return device

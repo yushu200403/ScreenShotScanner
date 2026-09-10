@@ -269,11 +269,7 @@ def pair_device(user):
     pending = PairRequest(device_id=device.id, user_id=user.id, expires_at=expires)
     db.session.add(pending)
     db.session.commit()
-    if not send_device(device.device_id, {"type": "approval_request", "pair_request_id": pending.id,
-                                           "username": user.username, "display_name": user.display_name}):
-        pending.status = "expired"
-        db.session.commit()
-        return error("设备连接已断开", 409, "device_offline")
+    broadcast_user(device.owner_id, {"type": "sharing_request", "device_id": device.id})
     audit(user.id, "device.pair_requested", "device", device.id)
     return jsonify({"status": "pending", "pair_request_id": pending.id}), 202
 
@@ -358,7 +354,7 @@ def create_request(user, device_id):
     payload = json_body()
     preset = selected_preset(device)
     if not available(preset, device.owner):
-        return error("请先在这台电脑的客户端选择可用的预设", 409, "preset_required")
+        return error("请先在截图问答页选择可用的预设", 409, "preset_required")
     if "force" in payload and not isinstance(payload["force"], bool):
         return error("请选择是否停止上一条回答")
     question = payload.get("question", "")

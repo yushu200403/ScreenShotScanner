@@ -69,8 +69,7 @@ def login():
         disconnect(device, "这台电脑已重新登录")
         credential.token_hash, credential.token_last4 = hash_token(token), token[-4:]
         credential.revoked_at = None
-        credential.name = name.strip()
-        device.name = name.strip()
+        credential.name = device.name
     else:
         credential = ClientCredential(owner_id=user.id, device_id=device_id, name=name.strip(),
                                       token_hash=hash_token(token), token_last4=token[-4:])
