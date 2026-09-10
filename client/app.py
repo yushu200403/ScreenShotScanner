@@ -62,49 +62,117 @@ class ScreenAnswerClient:
     def _new_code():
         return f"{secrets.randbelow(1_000_000_000):09d}"
 
+    # 与网页端一致的配色，客户端和浏览器界面保持同一套视觉语言
+    CANVAS = "#f2f6f4"
+    CARD = "#ffffff"
+    INK = "#15201f"
+    FIELD = "#3c4e4a"
+    MUTED = "#5f7370"
+    LINE = "#e2eae7"
+    ACCENT = "#147d73"
+    ACCENT_DARK = "#0b6259"
+    ACCENT_SOFT = "#eaf3f0"
+
     def _build_ui(self):
         px = lambda value: round(value * self.ui_scale)
-        self.root.configure(background="#f3f7f6")
+        font = ("Microsoft YaHei UI", 10)
+        self.root.configure(background=self.CANVAS)
         style = ttk.Style(self.root)
         style.theme_use("clam")
-        style.configure("TFrame", background="#f3f7f6")
-        style.configure("TLabel", background="#f3f7f6", foreground="#243b38", font=("Microsoft YaHei UI", 10))
-        style.configure("Title.TLabel", font=("Microsoft YaHei UI", 24, "bold"))
-        style.configure("Muted.TLabel", foreground="#657a75")
-        style.configure("Status.TLabel", padding=px(12), background="#e4efeb", foreground="#126e61")
-        style.configure("TButton", padding=(px(12), px(10)), font=("Microsoft YaHei UI", 10))
-        style.configure("Primary.TButton", background="#147d73", foreground="white")
-        style.map("Primary.TButton", background=[("active", "#0b6259"), ("disabled", "#94afa9")])
-        style.configure("TEntry", padding=px(9), font=("Microsoft YaHei UI", 10))
-        self.outer = ttk.Frame(self.root, padding=px(28))
+        style.configure("TFrame", background=self.CANVAS)
+        style.configure("TLabel", background=self.CANVAS, foreground=self.INK, font=font)
+        style.configure("Title.TLabel", font=("Microsoft YaHei UI", 19, "bold"))
+        style.configure("Muted.TLabel", foreground=self.MUTED, font=("Microsoft YaHei UI", 9))
+        style.configure("Card.TFrame", background=self.CARD, bordercolor=self.LINE, relief="solid", borderwidth=1)
+        style.configure("CardHead.TLabel", background=self.CARD, foreground=self.INK, font=("Microsoft YaHei UI", 12, "bold"))
+        style.configure("CardField.TLabel", background=self.CARD, foreground=self.FIELD, font=("Microsoft YaHei UI", 9, "bold"))
+        style.configure("CardMuted.TLabel", background=self.CARD, foreground=self.MUTED, font=("Microsoft YaHei UI", 9))
+        style.configure("CardName.TLabel", background=self.CARD, foreground=self.INK, font=("Microsoft YaHei UI", 15, "bold"))
+        style.configure("Chip.TLabel", background=self.ACCENT_SOFT, foreground=self.ACCENT_DARK,
+                        font=("Microsoft YaHei UI", 9, "bold"), padding=(px(10), px(6)))
+        style.configure("StatusWrap.TFrame", background="#eef3f1")
+        style.configure("StatusEdge.TFrame", background=self.ACCENT)
+        style.configure("Status.TLabel", background="#eef3f1", foreground=self.ACCENT_DARK,
+                        font=("Microsoft YaHei UI", 9), padding=(px(12), px(11)))
+        style.configure("TButton", font=font, padding=(px(13), px(10)), relief="solid", borderwidth=1,
+                        background="#ffffff", foreground=self.INK, bordercolor="#d5e0dd",
+                        lightcolor="#ffffff", darkcolor="#ffffff")
+        style.map("TButton", background=[("pressed", "#eef3f1"), ("active", "#f6faf9"), ("disabled", "#f5f8f7")],
+                  bordercolor=[("active", "#a4c7c0"), ("disabled", "#e6ecea")],
+                  foreground=[("disabled", "#9aaba7")])
+        style.configure("Primary.TButton", background=self.ACCENT, foreground="#ffffff", padding=(px(13), px(11)),
+                        font=("Microsoft YaHei UI", 10, "bold"), bordercolor=self.ACCENT,
+                        lightcolor=self.ACCENT, darkcolor=self.ACCENT)
+        style.map("Primary.TButton",
+                  background=[("pressed", self.ACCENT_DARK), ("active", self.ACCENT_DARK), ("disabled", "#bacfca")],
+                  bordercolor=[("pressed", self.ACCENT_DARK), ("active", self.ACCENT_DARK), ("disabled", "#bacfca")],
+                  lightcolor=[("pressed", self.ACCENT_DARK), ("active", self.ACCENT_DARK), ("disabled", "#bacfca")],
+                  darkcolor=[("pressed", self.ACCENT_DARK), ("active", self.ACCENT_DARK), ("disabled", "#bacfca")],
+                  foreground=[("disabled", "#f1f6f5")])
+        style.configure("Link.TButton", background=self.CARD, foreground=self.ACCENT_DARK, padding=(px(8), px(9)),
+                        relief="flat", borderwidth=0, bordercolor=self.CARD, lightcolor=self.CARD, darkcolor=self.CARD)
+        style.map("Link.TButton", background=[("pressed", self.CARD), ("active", self.CARD)],
+                  bordercolor=[("active", self.CARD)], foreground=[("active", self.ACCENT)])
+        style.configure("TEntry", padding=px(10), relief="flat", fieldbackground="#ffffff", foreground=self.INK,
+                        bordercolor="#d7e1de", lightcolor="#d7e1de", darkcolor="#d7e1de", insertcolor=self.INK)
+        style.map("TEntry", bordercolor=[("focus", self.ACCENT)], lightcolor=[("focus", self.ACCENT)],
+                  darkcolor=[("focus", self.ACCENT)])
+        self.outer = ttk.Frame(self.root, padding=(px(24), px(22)))
         self.outer.pack(fill="both", expand=True)
-        ttk.Label(self.outer, text="屏幕问答器", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(self.outer, text="连接这台电脑，在网页开始截图问答。", style="Muted.TLabel").pack(anchor="w", pady=(px(6), px(24)))
-        self.login_panel = ttk.Frame(self.outer)
+        header = ttk.Frame(self.outer)
+        header.pack(fill="x", pady=(0, px(18)))
+        mark = tk.Canvas(header, width=px(42), height=px(42), background=self.CANVAS, highlightthickness=0, borderwidth=0)
+        mark.pack(side="left")
+        self._draw_mark(mark, px(42))
+        heading = ttk.Frame(header)
+        heading.pack(side="left", padx=(px(12), 0))
+        ttk.Label(heading, text="屏幕问答器", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(heading, text="连接这台电脑，在网页开始截图问答 · " + APP_VERSION, style="Muted.TLabel").pack(anchor="w", pady=(px(3), 0))
+        self.login_panel = ttk.Frame(self.outer, style="Card.TFrame", padding=px(18))
         self.login_panel.pack(fill="x")
+        ttk.Label(self.login_panel, text="登录账号", style="CardHead.TLabel").pack(anchor="w")
+        ttk.Label(self.login_panel, text="与网页使用同一个账号密码。", style="CardMuted.TLabel").pack(anchor="w", pady=(px(4), px(12)))
         for label, variable, hidden in [("服务器地址", self.server_var, False), ("账号", self.username_var, False),
                                          ("密码", self.password_var, True)]:
-            ttk.Label(self.login_panel, text=label).pack(anchor="w", pady=(px(8), px(5)))
-            entry = ttk.Entry(self.login_panel, textvariable=variable, show="●" if hidden else "")
+            ttk.Label(self.login_panel, text=label, style="CardField.TLabel").pack(anchor="w", pady=(px(9), px(5)))
+            entry = ttk.Entry(self.login_panel, textvariable=variable, show="●" if hidden else "", font=font)
             entry.pack(fill="x")
             if variable is self.server_var:
-                ttk.Label(self.login_panel, text="例如：https://sss.im33.xyz", style="Muted.TLabel").pack(anchor="w", pady=(px(4), px(0)))
+                ttk.Label(self.login_panel, text="例如：https://sss.im33.xyz", style="CardMuted.TLabel").pack(anchor="w", pady=(px(4), px(0)))
             if hidden:
                 entry.bind("<Return>", lambda event: self.connect())
         self.connect_button = ttk.Button(self.login_panel, text="登录并连接", style="Primary.TButton", command=self.connect)
-        self.connect_button.pack(fill="x", pady=(px(20), px(8)))
-        ttk.Button(self.login_panel, text="打开网页注册", command=self.open_web).pack(fill="x")
-        self.settings_panel = ttk.Frame(self.outer)
-        self.account_label = ttk.Label(self.settings_panel)
-        self.account_label.pack(anchor="w", pady=(px(0), px(18)))
-        ttk.Label(self.settings_panel, text="当前电脑", style="Muted.TLabel").pack(anchor="w")
-        ttk.Label(self.settings_panel, textvariable=self.name_var, font=("Microsoft YaHei UI", 16, "bold"), wraplength=px(440)).pack(anchor="w", pady=(px(6), px(16)))
-        ttk.Label(self.settings_panel, text="在网页选择预设、管理电脑并查看回答。", style="Muted.TLabel").pack(anchor="w", pady=(px(0), px(20)))
-        ttk.Button(self.settings_panel, text="打开截图问答", style="Primary.TButton", command=self.open_web).pack(fill="x", pady=(px(0), px(10)))
+        self.connect_button.pack(fill="x", pady=(px(18), px(6)))
+        ttk.Button(self.login_panel, text="打开网页注册", style="Link.TButton", command=self.open_web).pack(fill="x")
+        self.settings_panel = ttk.Frame(self.outer, style="Card.TFrame", padding=px(18))
+        self.account_label = ttk.Label(self.settings_panel, style="Chip.TLabel")
+        self.account_label.pack(anchor="w", pady=(px(0), px(16)))
+        ttk.Label(self.settings_panel, text="当前电脑", style="CardField.TLabel").pack(anchor="w")
+        ttk.Label(self.settings_panel, textvariable=self.name_var, style="CardName.TLabel", wraplength=px(400)).pack(anchor="w", pady=(px(5), px(12)))
+        ttk.Label(self.settings_panel, text="在网页选择预设、管理电脑并查看回答。", style="CardMuted.TLabel", wraplength=px(400)).pack(anchor="w", pady=(px(0), px(18)))
+        ttk.Button(self.settings_panel, text="打开截图问答", style="Primary.TButton", command=self.open_web).pack(fill="x", pady=(px(0), px(8)))
         self.reconnect_button = ttk.Button(self.settings_panel, text="重新连接", command=self.connect)
-        self.reconnect_button.pack(fill="x", pady=(px(0), px(10)))
+        self.reconnect_button.pack(fill="x", pady=(px(0), px(8)))
         ttk.Button(self.settings_panel, text="退出登录", command=self.logout).pack(fill="x")
-        ttk.Label(self.outer, textvariable=self.status_var, style="Status.TLabel", wraplength=px(410)).pack(fill="x", pady=(px(22), px(0)))
+        self.status_panel = ttk.Frame(self.outer, style="StatusWrap.TFrame")
+        self.status_panel.pack(fill="x", pady=(px(18), px(0)))
+        ttk.Frame(self.status_panel, style="StatusEdge.TFrame", width=px(3)).pack(side="left", fill="y")
+        ttk.Label(self.status_panel, textvariable=self.status_var, style="Status.TLabel", wraplength=px(380)).pack(side="left", fill="x", expand=True)
+
+    def _draw_mark(self, canvas, size):
+        """绘制与网页标识一致的应用图标。"""
+        def rounded(x1, y1, x2, y2, radius, fill):
+            points = [x1 + radius, y1, x2 - radius, y1, x2, y1, x2, y1 + radius, x2, y2 - radius,
+                      x2, y2, x2 - radius, y2, x1 + radius, y2, x1, y2, x1, y2 - radius, x1, y1 + radius, x1, y1]
+            canvas.create_polygon(points, smooth=True, fill=fill, outline=fill)
+        rounded(1, 1, size - 1, size - 1, size * 0.28, self.ACCENT)
+        inset, arm = size * 0.24, size * 0.13
+        width = max(2, round(size * 0.055))
+        for x, y, dx, dy in ((inset, inset, 1, 1), (size - inset, inset, -1, 1),
+                             (inset, size - inset, 1, -1), (size - inset, size - inset, -1, -1)):
+            canvas.create_line(x, y + dy * arm, x, y, x + dx * arm, y, fill="#d9ede7", width=width,
+                               capstyle="round", joinstyle="round")
+        rounded(size * 0.34, size * 0.38, size * 0.66, size * 0.62, size * 0.05, "#ffffff")
 
     def _background(self, work, done):
         if self.busy:

@@ -1,4 +1,4 @@
-param([string]$Python, [switch]$SkipInstall, [switch]$Clean, [string]$OutputName = "ScreenShotScannerClient.exe")
+﻿param([string]$Python, [switch]$SkipInstall, [switch]$Clean, [string]$OutputName = "ScreenShotScannerClient.exe")
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 $projectPython = Join-Path $PSScriptRoot ".venv-build\Scripts\python.exe"
