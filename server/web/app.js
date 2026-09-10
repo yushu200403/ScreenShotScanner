@@ -1,4 +1,4 @@
-const state = { user: null, csrf: "", page: "dashboard", devices: [], presets: [], deviceLimit: 5, requests: [], selectedDeviceId: null, socket: null, reconnectTimer: null, deviceDrafts: {}, requestLoadVersion: 0, pendingSettings: new Set(), pendingRequests: new Set(), answerViews: new Map() };
+const state = { user: null, csrf: "", page: "dashboard", devices: [], presets: [], deviceLimit: 5, requests: [], selectedDeviceId: null, socket: null, reconnectTimer: null, deviceDrafts: {}, requestLoadVersion: 0, pendingSettings: new Set(), pendingRequests: new Set(), answerViews: new Map(), deviceSelectionVersion: 0 };
 const activeStatuses = ["waiting_capture", "capturing", "uploading", "processing"];
 const $ = (selector) => document.querySelector(selector);
 const contentRoot = () => $("#page-content");
@@ -11,13 +11,13 @@ function values(form) { return Object.fromEntries(new FormData(form).entries());
 async function api(path, options) { options=options||{}; var method=(options.method||"GET").toUpperCase(); var headers=new Headers(options.headers||{}); if(options.body && !(options.body instanceof FormData)) headers.set("Content-Type","application/json"); if(method !== "GET" && state.csrf) headers.set("X-CSRF-Token",state.csrf); var response=await fetch(path,Object.assign({},options,{method:method,headers:headers,credentials:"same-origin"})); var data={}; try{data=await response.json();}catch(_){ } if(response.status===401&&state.user)clearSession(); if(!response.ok) throw new Error((data.error&&data.error.message)||("请求失败（"+response.status+"）")); return data; }
 let modalReturnFocus=null;
 let modalBodyOverflow="";
-function modal(inner) { if(!$(".modal")){modalReturnFocus=document.activeElement;modalBodyOverflow=document.body.style.overflow;}document.body.style.overflow="hidden";$("#modal-root").innerHTML='<div class="modal-backdrop" data-close-modal><div class="modal" role="dialog" aria-modal="true" tabindex="-1" onclick="event.stopPropagation()"><button class="quiet-button modal-close" type="button" aria-label="关闭弹窗" onclick="closeModal()">关闭</button>'+inner+'</div></div>';const dialog=$(".modal");dialog.setAttribute("aria-label",dialog.querySelector("h3")?.textContent||"设置");(dialog.querySelector("input,textarea,select")||dialog.querySelector("button")||dialog).focus(); }
-function closeModal() { $("#modal-root").innerHTML="";document.body.style.overflow=modalBodyOverflow;const trigger=modalReturnFocus?.isConnected?modalReturnFocus:document.getElementById(modalReturnFocus?.id);trigger?.focus();modalReturnFocus=null; }
+function modal(inner) { saveDeviceDraft();if(!$(".modal")){modalReturnFocus=document.activeElement;modalBodyOverflow=document.body.style.overflow;}document.body.style.overflow="hidden";$("#modal-root").innerHTML='<div class="modal-backdrop" data-close-modal><div class="modal" role="dialog" aria-modal="true" tabindex="-1" onclick="event.stopPropagation()"><button class="quiet-button modal-close" type="button" aria-label="关闭弹窗" onclick="closeModal()">关闭</button>'+inner+'</div></div>';const dialog=$(".modal");dialog.setAttribute("aria-label",dialog.querySelector("h3")?.textContent||"设置");(dialog.querySelector("input,textarea,select")||dialog.querySelector("button")||dialog).focus(); }
+function closeModal() { saveDeviceDraft();$("#modal-root").innerHTML="";document.body.style.overflow=modalBodyOverflow;const trigger=modalReturnFocus?.isConnected?modalReturnFocus:document.getElementById(modalReturnFocus?.id);trigger?.focus();modalReturnFocus=null; }
 function showApp() { $("#auth-view").classList.add("hidden");$("#app-view").classList.remove("hidden");$("#account-name").textContent=state.user.display_name;$("#account-role").textContent=state.user.role === "admin" ? "管理员" : "普通用户";document.querySelectorAll(".admin-only").forEach(function(n){n.classList.toggle("hidden",state.user.role !== "admin");});connectBrowser();navigate("dashboard"); }
 async function boot() {
   document.addEventListener("keydown",e=>{const dialog=$(".modal");if(!dialog)return;if(e.key==="Escape"){closeModal();return;}if(e.key!=="Tab")return;const fields=Array.from(dialog.querySelectorAll('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href],summary')).filter(x=>x.getClientRects().length);if(!fields.length){e.preventDefault();dialog.focus();return;}const first=fields[0],last=fields[fields.length-1];if(e.shiftKey&&(document.activeElement===first||document.activeElement===dialog)){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});
-  document.addEventListener("input",function(e){if(e.target.closest("#request-form"))saveDeviceDraft();});
-  document.addEventListener("change",function(e){if(e.target.closest("#request-form"))saveDeviceDraft();});
+  document.addEventListener("input",function(e){if(e.target.closest("#question-form"))saveDeviceDraft();});
+  document.addEventListener("change",function(e){if(e.target.closest("#question-form"))saveDeviceDraft();});
   $("#login-form").addEventListener("submit",async function(e){e.preventDefault();try{var r=await api("/api/auth/login",{method:"POST",body:JSON.stringify(values(e.currentTarget))});state.user=r.user;state.csrf=r.csrf_token;showApp();}catch(err){setMessage("#login-message",err.message,true);}});
   $("#register-form").addEventListener("submit",async function(e){e.preventDefault();var form=e.currentTarget;try{await api("/api/auth/register",{method:"POST",body:JSON.stringify(values(form))});form.reset();setMessage("#register-message","注册申请已提交，请等待管理员审批");}catch(err){setMessage("#register-message",err.message,true);}});
   document.querySelectorAll("[data-auth-tab]").forEach(function(button){button.addEventListener("click",function(){document.querySelectorAll("[data-auth-tab]").forEach(function(n){n.classList.toggle("active",n===button);});$("#login-form").classList.toggle("hidden",button.dataset.authTab!=="login");$("#register-form").classList.toggle("hidden",button.dataset.authTab!=="register");});});
@@ -40,11 +40,18 @@ function connectBrowser(){
   socket.onerror=function(){if(state.socket===socket)$("#connection-indicator").innerHTML='<span class="status-dot danger"></span><span>连接暂时中断</span>';};
   socket.onmessage=function(e){if(state.socket!==socket)return;try{realtime(JSON.parse(e.data));}catch(err){notify("实时消息处理失败："+err.message,true);}};
 }
-function saveDeviceDraft(){var form=$("#request-form");if(form&&state.selectedDeviceId)state.deviceDrafts[form.dataset.deviceId||state.selectedDeviceId]=values(form);}
-function restoreDeviceDraft(){
-  var form=$("#request-form"),draft=state.deviceDrafts[state.selectedDeviceId];
-  if(!form||!draft)return;
-  ["question"].forEach(function(name){var input=form.elements.namedItem(name);if(input&&draft[name]!==undefined){input.value=draft[name];if(name==="model_profile_id")input.dispatchEvent(new Event("change"));}});
+function saveDeviceDraft() {
+  const form=$("#question-form");
+  if(form)state.deviceDrafts[form.dataset.deviceId]=values(form);
+  syncQuestionIndicator();
+}
+function restoreDeviceDraft() {
+  const form=$("#question-form");
+  if(form)form.elements.question.value=state.deviceDrafts[form.dataset.deviceId]?.question||"";
+}
+function syncQuestionIndicator() {
+  const menu=$("#console-menu"),hasQuestion=!!state.deviceDrafts[state.selectedDeviceId]?.question?.trim();
+  if(menu){menu.classList.toggle("has-question",hasQuestion);menu.title=hasQuestion?"问答设置（已填写补充问题）":"问答设置";}
 }
 async function refreshDevices(){
   await loadDevices();
@@ -55,6 +62,7 @@ async function refreshDevices(){
 }
 function realtime(message){if(message.type==="sharing_request"){notify("收到电脑共享申请，请打开共享管理处理");if($("#sharing-pending"))loadSharing(Number($("#sharing-pending").dataset.deviceId));}if(message.type === "request_update"&&message.request){var row=message.request;var i=state.requests.findIndex(function(x){return x.id===row.id;});if(i>=0)state.requests[i]=Object.assign({},state.requests[i],row);else state.requests.unshift(row);if(state.page === "dashboard"&&$("#latest-request")&&row.device_id===state.selectedDeviceId){updateLatestAnswer(row);syncRequestControls();}if(state.page === "history"&&["completed","failed","cancelled"].includes(row.status))renderHistory();}if(message.type === "device_update"){refreshDevices().catch(function(e){notify(e.message,true);});}if(message.type === "pairing_update"){notify(message.status === "approved" ? "电脑主人已允许使用" : message.status === "expired" ? "连接许可已失效" : "电脑主人拒绝了申请",message.status !== "approved");refreshDevices().catch(function(e){notify(e.message,true);});}}
 async function navigate(page) {
+  state.deviceSelectionVersion++;
   saveDeviceDraft();
   rememberAnswerView();
   state.page=page;
@@ -92,11 +100,13 @@ function updateLatestAnswer(row) {
   if(focusOnSummary)root.querySelector("summary")?.focus({preventScroll:true});
 }
 function syncRequestControls() {
-  const device=state.devices.find(d=>d.id===state.selectedDeviceId),form=$("#request-form");
-  if(!device||!form)return;
+  const device=state.devices.find(d=>d.id===state.selectedDeviceId),button=$("#capture-action");
+  if(!device||!button)return;
   const active=state.requests.some(r=>r.device_id===device.id&&activeStatuses.includes(r.status));
-  form.querySelector('[type="submit"]').disabled=!device.online||!device.preset_available||active||state.pendingSettings.has(device.id)||state.pendingRequests.has(device.id);
-  $("#cancel-active").disabled=!active||state.pendingRequests.has(device.id);
+  const pending=state.pendingRequests.has(device.id),stoppable=active||pending;
+  button.className=stoppable?"danger-button":"primary-button";
+  button.textContent=stoppable?"停止回答":"截图并提问";
+  button.disabled=pending||(!active&&(!device.online||!device.preset_available||state.pendingSettings.has(device.id)));
 }
 async function cancelActiveRequest() {
   const deviceId=state.selectedDeviceId;
@@ -124,31 +134,58 @@ async function renderDashboard() {
   if(state.page!=="dashboard")return;
   renderDeviceList();renderDeviceDetail();
 }
+function deviceRows() {
+  return state.devices.length?state.devices.map(d=>`<button type="button" class="device-row ${d.id===state.selectedDeviceId?"selected":""}" aria-pressed="${d.id===state.selectedDeviceId}" data-device-id="${d.id}"><div class="device-main"><div class="device-name">${esc(d.name)}</div><div class="device-meta">${esc(d.owner_name)}${state.devices.filter(x=>x.name===d.name).length>1?" · 电脑编号 "+d.id:""}<br>${esc(d.preset?.name||"尚未选择预设")}</div></div><div class="device-state">${statusLabel(d.online?"online":"offline")}</div></button>`).join(""):'<p class="muted">还没有电脑。请打开客户端，填写服务器地址并登录这个账号。</p>';
+}
+function bindDeviceChoices(root) {
+  root.querySelectorAll("[data-device-id]").forEach(button=>button.addEventListener("click",()=>selectDevice(Number(button.dataset.deviceId))));
+}
+async function selectDevice(id) {
+  const version=++state.deviceSelectionVersion;
+  saveDeviceDraft();rememberAnswerView();
+  try {
+    const result=await api("/api/requests?device_id="+encodeURIComponent(id));
+    if(version!==state.deviceSelectionVersion||state.page!=="dashboard")return;
+    state.requestLoadVersion++;
+    state.requests=result.items;
+    state.selectedDeviceId=id;
+    if($("#computer-choices"))closeModal();
+    renderDeviceList();renderDeviceDetail();
+  }catch(e){notify(e.message,true);}
+}
 function renderDeviceList() {
   const list=$("#device-list");if(!list)return;
   $("#device-count").textContent=`我的电脑 ${state.devices.filter(d=>d.owner_id===state.user.id).length} / ${state.deviceLimit} 台`;
-  list.innerHTML=state.devices.length?state.devices.map(d=>`<button type="button" class="device-row ${d.id===state.selectedDeviceId?"selected":""}" data-device-id="${d.id}"><div class="device-main"><div class="device-name">${esc(d.name)}</div><div class="device-meta">${esc(d.owner_name)}${state.devices.filter(x=>x.name===d.name).length>1?" · 电脑编号 "+d.id:""}<br>${esc(d.preset?.name||"尚未选择预设")}</div></div><div class="device-state">${statusLabel(d.online?"online":"offline")}</div></button>`).join(""):'<p class="muted">还没有电脑。请打开客户端，填写服务器地址并登录这个账号。</p>';
-  list.querySelectorAll("[data-device-id]").forEach(n=>n.addEventListener("click",async()=>{
-    saveDeviceDraft();state.selectedDeviceId=Number(n.dataset.deviceId);
-    try {await loadRequests(state.selectedDeviceId);if(state.page==="dashboard"){renderDeviceList();renderDeviceDetail();}}catch(e){notify(e.message,true);}
-  }));
+  list.innerHTML=deviceRows();bindDeviceChoices(list);
+  const choices=$("#computer-choices");if(choices){choices.innerHTML=deviceRows();bindDeviceChoices(choices);}
+}
+function computerPicker() {
+  modal(`<h3>选择电脑</h3><div id="computer-choices" class="computer-choices">${deviceRows()}</div><div class="modal-actions"><button type="button" class="secondary-button" id="picker-manage">电脑列表管理</button></div>`);
+  bindDeviceChoices($("#computer-choices"));
+  $("#picker-manage").addEventListener("click",()=>controlsModal());
 }
 function renderDeviceDetail() {
   const root=$("#device-detail"),device=state.devices.find(d=>d.id===state.selectedDeviceId);if(!root)return;
-  saveDeviceDraft();
-  rememberAnswerView();
-  if(!device){root.innerHTML='<div class="detail-empty"><i class="ri ri-computer" aria-hidden="true"></i><strong>连接你的第一台电脑</strong><span>打开客户端并登录同一账号，<br>再在这里选择预设、开始提问。</span></div>';return;}
+  saveDeviceDraft();rememberAnswerView();
+  if(!device){root.innerHTML='<div class="empty-console"><button class="secondary-button" id="empty-computer-picker">选择电脑</button></div><div class="detail-empty"><i class="ri ri-computer" aria-hidden="true"></i><strong>连接你的第一台电脑</strong><span>打开客户端并登录同一账号。</span></div>';$("#empty-computer-picker").addEventListener("click",computerPicker);return;}
   const own=device.owner_id===state.user.id||state.user.role==="admin";
   const latest=state.requests.find(r=>r.device_id===device.id);
-  root.innerHTML=`<div class="console-controls"><div class="panel-title"><div class="device-heading"><span class="device-avatar"><i class="ri ri-computer" aria-hidden="true"></i></span><div><h3>${esc(device.name)}</h3><div class="console-meta">${statusLabel(device.online?"online":"offline")}<span class="muted">预设：${esc(device.preset?.name||"尚未选择")}</span></div></div></div><button class="quiet-button menu-button" id="console-menu" aria-label="问答设置" aria-haspopup="dialog"><span class="hamburger" aria-hidden="true"></span></button></div>
-    ${!device.preset_available?`<p class="request-status failed">${own?"请在右上角的问答设置中选择可用预设。":"请联系电脑主人选择可用预设。"}</p>`:""}
-    ${!device.online?'<p class="request-status">这台电脑尚未连接，请打开客户端并登录。</p>':""}
-    <form id="request-form" data-device-id="${device.id}" class="control-grid"><label class="sr-only" for="question-input">这次想问什么（可不填）</label><textarea id="question-input" name="question" rows="2" maxlength="5000" placeholder="这次想问什么？例如：请解释屏幕上这道题的解法（可不填）"></textarea><div class="control-actions"><button class="primary-button" type="submit" disabled><i class="ri ri-screenshot" aria-hidden="true"></i>截图并提问</button><button type="button" class="danger-button" id="cancel-active" disabled>停止上一条</button></div></form></div>
+  root.innerHTML=`<div class="console-controls"><form id="request-form" data-device-id="${device.id}" class="console-bar">
+    <div class="console-device"><div class="desktop-device-name" title="${esc(device.name)}">${statusLabel(device.online?"online":"offline")}<strong>${esc(device.name)}</strong></div><button type="button" class="secondary-button mobile-device-picker" id="select-computer" aria-haspopup="dialog" aria-label="选择电脑"><span class="status-dot ${device.online?"online":""}" aria-hidden="true"></span><span>${esc(device.name)}</span><span aria-hidden="true">⌄</span></button></div>
+    <div class="console-preset">${own?`<label class="sr-only" for="device-preset">本次使用的预设</label><select id="device-preset" data-device-id="${device.id}" disabled><option>正在加载预设...</option></select>`:`<span class="shared-preset" title="由电脑主人设置">预设：${esc(device.preset?.name||"尚未选择")}</span>`}</div>
+    <button class="primary-button" id="capture-action" type="submit" disabled>截图并提问</button><button type="button" class="quiet-button menu-button" id="console-menu" aria-label="问答设置" aria-haspopup="dialog"><span class="hamburger" aria-hidden="true"></span></button></form>
+    ${!device.preset_available?`<p class="request-status failed">${own?"请选择可用预设。":"请联系电脑主人选择可用预设。"}</p>`:""}
+    ${!device.online?'<p class="request-status">这台电脑尚未连接，请打开客户端并登录。</p>':""}</div>
     <div id="latest-request" tabindex="0" aria-label="当前回答">${latest?requestResult(latest):'<div class="detail-empty"><i class="ri ri-screenshot" aria-hidden="true"></i><strong>准备好后，点击截图并提问</strong><span>回答和截图会保存在问答历史中。</span></div>'}</div>`;
-  restoreDeviceDraft();$("#request-form").addEventListener("submit",submitRequest);
+  $("#request-form").addEventListener("submit",e=>{
+    e.preventDefault();
+    if(state.requests.some(r=>r.device_id===device.id&&activeStatuses.includes(r.status)))cancelActiveRequest();
+    else submitRequest(e);
+  });
   $("#console-menu").addEventListener("click",()=>controlsModal(device));
-  $("#cancel-active").addEventListener("click",cancelActiveRequest);
-  restoreAnswerView();syncRequestControls();
+  $("#select-computer").addEventListener("click",computerPicker);
+  if(own)loadComputerPresets(device);
+  restoreAnswerView();syncRequestControls();syncQuestionIndicator();
 }
 async function loadComputerPresets(device) {
   const select=$("#device-preset");
@@ -156,26 +193,27 @@ async function loadComputerPresets(device) {
     const result=await api(`/api/devices/${device.id}/settings`);
     if(!select.isConnected)return;
     select.innerHTML='<option value="">请选择预设</option>'+result.presets.map(p=>`<option value="${p.id}" ${p.id===device.preset?.id?"selected":""}>${esc(p.name)} · ${p.is_global?"公共":"个人"}${result.presets.filter(x=>x.name===p.name).length>1?" · #"+p.id:""}</option>`).join("");
-    select.disabled=false;
+    select.disabled=state.pendingSettings.has(device.id);
     select.addEventListener("change",async()=>{
       if(!select.value){select.value=String(state.devices.find(d=>d.id===device.id)?.preset?.id||"");return;}
-      select.disabled=true;saveDeviceDraft();state.pendingSettings.add(device.id);const ask=$('#request-form [type="submit"]');if(ask)ask.disabled=true;
+      select.disabled=true;saveDeviceDraft();state.pendingSettings.add(device.id);syncRequestControls();
       try {await api(`/api/devices/${device.id}/settings`,{method:"PUT",body:JSON.stringify({preset_id:Number(select.value)})});notify("预设已更新");await refreshDevices();}
       catch(e){select.value=String(state.devices.find(d=>d.id===device.id)?.preset?.id||"");notify(e.message,true);}
-      finally{state.pendingSettings.delete(device.id);select.disabled=false;syncRequestControls();}
+      finally{state.pendingSettings.delete(device.id);select.disabled=false;const current=$("#device-preset");if(current?.dataset.deviceId===String(device.id))current.disabled=false;syncRequestControls();}
     });
   }catch(e){if(select.isConnected)select.innerHTML='<option>加载失败，请刷新电脑列表</option>';notify(e.message,true);}
 }
 function controlsModal(device) {
   const own=device&&(device.owner_id===state.user.id||state.user.role==="admin");
   modal(`<h3>${device?"问答设置 · "+esc(device.name):"电脑列表管理"}</h3><div class="settings-stack">
-    ${device?own?`<label>本次使用的预设<select id="device-preset" data-device-id="${device.id}" disabled><option>正在加载预设...</option></select></label><div class="settings-actions"><button class="secondary-button" id="manage-presets">管理预设</button><button class="secondary-button" id="manage-device">电脑设置</button><button class="secondary-button" id="share-device">共享管理</button></div>`:`<p>当前预设：${esc(device.preset?.name||"尚未选择")}</p><button class="secondary-button" id="remove-device">从列表移除</button>`:""}
+    ${device?`<form id="question-form" data-device-id="${device.id}" class="stack-form"><label>补充问题（可不填）<textarea name="question" rows="4" maxlength="5000" placeholder="例如：请解释屏幕上这道题的解法"></textarea></label><button type="submit" class="primary-button">完成</button></form>`:""}
+    ${device?own?`<div class="settings-actions"><button class="secondary-button" id="manage-presets">管理预设</button><button class="secondary-button" id="manage-device">电脑设置</button><button class="secondary-button" id="share-device">共享管理</button></div>`:`<p>当前预设：${esc(device.preset?.name||"尚未选择")}</p><button class="secondary-button" id="remove-device">从列表移除</button>`:""}
     <div class="settings-section"><button class="secondary-button" id="refresh-devices">刷新电脑列表</button></div>
     <form id="pair-form" class="stack-form settings-section"><label>添加其他账号的电脑<input class="code-input" name="connection_code" inputmode="numeric" maxlength="9" pattern="[0-9]{9}" placeholder="邀请码，例如：123456789" required></label><button class="secondary-button" type="submit">申请使用</button></form></div>`);
   $("#pair-form").addEventListener("submit",pairDevice);
   $("#refresh-devices").addEventListener("click",async e=>{const b=e.currentTarget;b.disabled=true;try{await refreshDevices();notify("电脑列表已刷新");}catch(err){notify(err.message,true);}finally{b.disabled=false;}});
+  if(device){restoreDeviceDraft();$("#question-form").addEventListener("submit",e=>{e.preventDefault();closeModal();});}
   if(own){
-    loadComputerPresets(device);
     $("#manage-presets").addEventListener("click",()=>{closeModal();navigate("presets");});
     $("#manage-device").addEventListener("click",()=>computerModal(device));
     $("#share-device").addEventListener("click",()=>sharingModal(device));
@@ -201,14 +239,14 @@ async function loadSharing(deviceId){
 }
 async function pairDevice(e){e.preventDefault();try{var r=await api("/api/devices/pair",{method:"POST",body:JSON.stringify({connection_code:new FormData(e.currentTarget).get("connection_code")})});if(r.status==="approved"){notify("设备已授权");await loadDevices();renderDashboard();return;}notify("申请已发送，请等待电脑主人在网页确认");var id=r.pair_request_id,timer=setInterval(async function(){try{var x=await api("/api/pairings/"+id);if(x.status!=="pending"){clearInterval(timer);notify(x.status==="approved"?"电脑主人已授权":({rejected:"对方未同意",expired:"申请已过期"})[x.status]||"申请已结束",x.status!=="approved");await refreshDevices();}}catch(_){clearInterval(timer);}},1000);}catch(err){notify(err.message,true);}}
 async function submitRequest(e) {
-  e.preventDefault();const form=e.currentTarget,deviceId=state.selectedDeviceId,v=values(form);
+  e.preventDefault();const deviceId=Number(e.currentTarget.dataset.deviceId);saveDeviceDraft();const question=state.deviceDrafts[deviceId]?.question||"";
   if(state.pendingSettings.has(deviceId)||state.pendingRequests.has(deviceId))return;
   state.pendingRequests.add(deviceId);syncRequestControls();
   try {
-    const r=await api("/api/devices/"+deviceId+"/requests",{method:"POST",body:JSON.stringify({question:v.question})});
+    const r=await api("/api/devices/"+deviceId+"/requests",{method:"POST",body:JSON.stringify({question})});
     const live=state.requests.find(row=>row.id===r.request.id);
     state.requests=state.requests.filter(row=>row.id!==r.request.id);state.requests.unshift(live||r.request);
-    delete state.deviceDrafts[deviceId];form.reset();const currentForm=$("#request-form");if(currentForm?.dataset.deviceId===String(deviceId))currentForm.reset();notify("正在截图，请稍候");
+    if((state.deviceDrafts[deviceId]?.question||"")===question){delete state.deviceDrafts[deviceId];const draftForm=$("#question-form");if(draftForm?.dataset.deviceId===String(deviceId))draftForm.reset();}syncQuestionIndicator();notify("正在截图，请稍候");
     if(state.page==="dashboard"&&state.selectedDeviceId===deviceId)renderDeviceDetail();
   }catch(err){notify(err.message,true);}
   finally{state.pendingRequests.delete(deviceId);syncRequestControls();}
