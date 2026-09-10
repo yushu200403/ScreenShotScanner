@@ -1,5 +1,6 @@
 import importlib.util
 import queue
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,8 +24,18 @@ class Value:
 
 
 class Widget:
+    def __init__(self):
+        self.options = {}
+        self.visible = False
+
     def configure(self, **kwargs):
-        pass
+        self.options.update(kwargs)
+
+    def grid(self):
+        self.visible = True
+
+    def grid_remove(self):
+        self.visible = False
 
     def pack(self, **kwargs):
         pass
@@ -51,11 +62,21 @@ def window():
     peer.login_panel = Widget()
     peer.settings_panel = Widget()
     peer.account_label = Widget()
+    peer.reconnect_button = Widget()
+    peer.mobile_qr_panel = Widget()
+    peer.mobile_qr_label = Widget()
+    peer.mobile_qr_caption = Widget()
+    peer.mobile_qr_image = None
+    peer.ui_scale = 1
+    peer.root = object()
+    peer.quitting = False
     peer.outer = SimpleNamespace(winfo_children=lambda: [Widget()])
     peer.written = []
     peer.store = SimpleNamespace(save=peer.written.append)
     peer.started = []
-    peer.connection = SimpleNamespace(start=lambda *args: peer.started.append(args), disconnect=lambda: None)
+    stop_event = threading.Event()
+    peer.connection = SimpleNamespace(start=lambda *args: peer.started.append(args), disconnect=stop_event.set,
+                                      stop_event=stop_event, fatal_error=False)
     peer._background = lambda work, done: done(work())
     return peer
 
@@ -100,3 +121,44 @@ def test_server_name_update_is_saved_on_ui_thread():
     peer.ui_events.get_nowait()()
     assert peer.name_var.get() == "网页设置的电脑名称"
     assert peer.written[-1]["device_name"] == "网页设置的电脑名称"
+
+
+def test_qr_appears_after_connection_and_uses_connected_server(monkeypatch):
+    peer = window()
+    peer.account = SimpleNamespace(server_url="https://example.com", token="登录状态")
+    peer.server_var.set("https://different.example.com")
+    addresses = []
+    monkeypatch.setattr(desktop_window, "website_qr", lambda address, size: addresses.append(address) or "二维码")
+    monkeypatch.setattr(desktop_window.ImageTk, "PhotoImage", lambda image, master: image)
+    peer._connected_callback("123456789")
+    assert not peer.mobile_qr_panel.visible
+    peer.ui_events.get_nowait()()
+    assert addresses == ["https://example.com"]
+    assert peer.mobile_qr_panel.visible
+    assert peer.mobile_qr_image == "二维码"
+    peer._set_status("连接中断", False)
+    assert not peer.mobile_qr_panel.visible
+    assert peer.mobile_qr_image is None
+    peer._accept_connection("123456789")
+    assert peer.mobile_qr_panel.visible
+    peer._clear_login()
+    assert not peer.mobile_qr_panel.visible
+
+
+def test_late_connection_callback_does_not_restore_qr_after_disconnect():
+    peer = window()
+    peer.account = SimpleNamespace(server_url="https://example.com", token="登录状态")
+    peer._connected_callback("123456789")
+    peer.disconnect()
+    peer.ui_events.get_nowait()()
+    assert not peer.mobile_qr_panel.visible
+    assert peer.mobile_qr_image is None
+
+
+def test_local_server_explains_why_phone_cannot_open_it():
+    peer = window()
+    peer.account = SimpleNamespace(server_url="http://localhost", token="登录状态")
+    peer._accept_connection("123456789")
+    assert peer.mobile_qr_panel.visible
+    assert "手机可访问" in peer.mobile_qr_label.options["text"]
+    assert peer.mobile_qr_image is None

@@ -16,6 +16,7 @@ from connection import ClientConnection
 from screenshot import enable_high_dpi
 from secure_store import SecureStore
 from version import APP_VERSION
+from website_qr import website_qr
 
 
 class ScreenAnswerClient:
@@ -46,6 +47,7 @@ class ScreenAnswerClient:
         self.busy = False
         self.account = None
         self.user = None
+        self.mobile_qr_image = None
         self.ui_events = queue.Queue()
         self.server_var = tk.StringVar(value=self.saved.get("server_url", "https://sss.im33.xyz/"))
         self.username_var = tk.StringVar(value=self.saved.get("username", ""))
@@ -87,6 +89,7 @@ class ScreenAnswerClient:
         style.configure("Title.TLabel", font=("Microsoft YaHei UI", 19, "bold"))
         style.configure("Muted.TLabel", foreground=self.MUTED, font=("Microsoft YaHei UI", 9))
         style.configure("Card.TFrame", background=self.CARD, bordercolor=self.LINE, relief="solid", borderwidth=1)
+        style.configure("CardBody.TFrame", background=self.CARD)
         style.configure("CardHead.TLabel", background=self.CARD, foreground=self.INK, font=("Microsoft YaHei UI", 12, "bold"))
         style.configure("CardField.TLabel", background=self.CARD, foreground=self.FIELD, font=("Microsoft YaHei UI", 9, "bold"))
         style.configure("CardMuted.TLabel", background=self.CARD, foreground=self.MUTED, font=("Microsoft YaHei UI", 9))
@@ -149,9 +152,21 @@ class ScreenAnswerClient:
         self.settings_panel = ttk.Frame(self.outer, style="Card.TFrame", padding=px(18))
         self.account_label = ttk.Label(self.settings_panel, style="Chip.TLabel")
         self.account_label.pack(anchor="w", pady=(px(0), px(16)))
-        ttk.Label(self.settings_panel, text="当前电脑", style="CardField.TLabel").pack(anchor="w")
-        ttk.Label(self.settings_panel, textvariable=self.name_var, style="CardName.TLabel", wraplength=px(400)).pack(anchor="w", pady=(px(5), px(12)))
-        ttk.Label(self.settings_panel, text="在网页选择预设、管理电脑并查看回答。", style="CardMuted.TLabel", wraplength=px(400)).pack(anchor="w", pady=(px(0), px(18)))
+        computer_details = ttk.Frame(self.settings_panel, style="CardBody.TFrame")
+        computer_details.pack(fill="x", pady=(0, px(16)))
+        computer_details.columnconfigure(0, weight=1)
+        computer_info = ttk.Frame(computer_details, style="CardBody.TFrame")
+        computer_info.grid(row=0, column=0, sticky="nw")
+        ttk.Label(computer_info, text="当前电脑", style="CardField.TLabel").pack(anchor="w")
+        ttk.Label(computer_info, textvariable=self.name_var, style="CardName.TLabel", wraplength=px(230)).pack(anchor="w", pady=(px(5), px(12)))
+        ttk.Label(computer_info, text="在网页选择预设、管理电脑并查看回答。", style="CardMuted.TLabel", wraplength=px(230)).pack(anchor="w")
+        self.mobile_qr_panel = ttk.Frame(computer_details, style="CardBody.TFrame")
+        self.mobile_qr_panel.grid(row=0, column=1, sticky="ne", padx=(px(12), 0))
+        self.mobile_qr_label = ttk.Label(self.mobile_qr_panel, style="CardMuted.TLabel", wraplength=px(160), justify="center")
+        self.mobile_qr_label.pack()
+        self.mobile_qr_caption = ttk.Label(self.mobile_qr_panel, text="手机扫码打开网站", style="CardMuted.TLabel")
+        self.mobile_qr_caption.pack(pady=(px(4), 0))
+        self.mobile_qr_panel.grid_remove()
         ttk.Button(self.settings_panel, text="打开截图问答", style="Primary.TButton", command=self.open_web).pack(fill="x", pady=(px(0), px(8)))
         self.reconnect_button = ttk.Button(self.settings_panel, text="重新连接", command=self.connect)
         self.reconnect_button.pack(fill="x", pady=(px(0), px(8)))
@@ -237,6 +252,7 @@ class ScreenAnswerClient:
             self.login_panel.pack_forget()
             self.settings_panel.pack(fill="x", before=self.outer.winfo_children()[-1])
             self.account_label.configure(text="已登录：" + self.user["display_name"])
+            self._hide_mobile_qr()
             self._save_current()
             self.connection.device_name = self.name_var.get()
             self.connection.start(server, account.token, self.device_id, self.connection_code)
@@ -269,11 +285,13 @@ class ScreenAnswerClient:
 
     def disconnect(self):
         self.connection.disconnect()
+        self._hide_mobile_qr()
         self.status_var.set("已断开，点击重新连接即可继续使用")
         self.reconnect_button.configure(state="normal")
 
     def _clear_login(self):
         self.connection.disconnect()
+        self._hide_mobile_qr()
         self.account = None
         self.user = None
         self.code_var.set("尚未连接")
@@ -316,6 +334,8 @@ class ScreenAnswerClient:
     def _set_status(self, text, connected):
         if not self.quitting:
             self.status_var.set(text)
+            if not connected:
+                self._hide_mobile_qr()
             if self.account and not connected and self.connection.fatal_error:
                 self.reconnect_button.configure(state="normal")
 
@@ -323,12 +343,30 @@ class ScreenAnswerClient:
         self.ui_events.put(lambda: self._accept_connection(code))
 
     def _accept_connection(self, code):
-        if self.quitting or not self.account:
+        if self.quitting or not self.account or self.connection.stop_event.is_set():
             return
         self.connection_code = code
         self.code_var.set(code)
         self._save_current()
         self.reconnect_button.configure(state="disabled")
+        self._show_mobile_qr()
+
+    def _show_mobile_qr(self):
+        try:
+            image = website_qr(self.account.server_url, round(160 * self.ui_scale))
+            self.mobile_qr_image = ImageTk.PhotoImage(image, master=self.root)
+            self.mobile_qr_label.configure(image=self.mobile_qr_image, text="")
+            self.mobile_qr_caption.configure(text="手机扫码打开网站")
+        except ValueError as exc:
+            self.mobile_qr_image = None
+            self.mobile_qr_label.configure(image="", text=str(exc))
+            self.mobile_qr_caption.configure(text="")
+        self.mobile_qr_panel.grid()
+
+    def _hide_mobile_qr(self):
+        self.mobile_qr_panel.grid_remove()
+        self.mobile_qr_label.configure(image="", text="")
+        self.mobile_qr_image = None
 
     def _invalidated_callback(self):
         self.ui_events.put(lambda: self.code_var.set("已停用"))
